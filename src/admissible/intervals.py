@@ -34,6 +34,11 @@ class BedFile:
     n_lines: int = 0
     n_malformed: int = 0
     problems: list[str] = field(default_factory=list)
+    # Column-4 values and the base pairs each covers.  Present so that a caller
+    # can see which depth bins a mosdepth --quantize file actually contains,
+    # rather than silently getting nothing when it asked for a bin that is not
+    # there.
+    labels: dict[str, int] = field(default_factory=dict)
 
     @property
     def total_bp(self) -> int:
@@ -75,6 +80,9 @@ def read_bed(
                 if end <= start:
                     bed.n_malformed += 1
                     continue
+                if len(f) >= 4 and f[3].strip():
+                    lab = f[3].strip()
+                    bed.labels[lab] = bed.labels.get(lab, 0) + (end - start)
                 if keep_label is not None and (len(f) < 4 or f[3].strip() != keep_label):
                     continue
                 raw.setdefault(normalize_contig(f[0]), []).append((start, end))
