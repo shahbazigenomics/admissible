@@ -201,6 +201,17 @@ def read_ped(path: str | os.PathLike[str]) -> Pedigree:
 
     # A parent named in the PED but never defined is a common, silent error.
     for ind in list(ped.individuals.values()):
+        # Their own parent. Arises when a relabelling renames a row but not the
+        # references to it, and it is not harmless: the kinship recursion takes
+        # it at face value and returns 0.5 for a pair that is nothing of the
+        # kind, so every reconciliation downstream is measured against a number
+        # the pedigree never meant.
+        if ind.iid in ind.parents:
+            ped.warnings.append(
+                f"{ind.iid} is listed as their own parent; the relationships "
+                f"computed through them cannot be trusted"
+            )
+    for ind in list(ped.individuals.values()):
         for parent in ind.parents:
             if parent != "0" and parent not in ped.individuals:
                 ped.warnings.append(
