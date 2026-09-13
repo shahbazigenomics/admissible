@@ -148,3 +148,77 @@ def test_all_pairs_are_dense_in_a_joint_vcf(result):
     assert len(result.metrics["pairs"]) == len(
         list(itertools.combinations(range(17), 2))
     )
+
+
+def _ped_with_three_affected_sibs(tmp_path):
+    """Real genotypes and a real pedigree, with an affection pattern declared.
+
+    CEPH 1463 is a healthy reference family - every phenotype is -9 - so a
+    segregation sweep has nothing to segregate. Declaring three of the eleven
+    NA12877 x NA12878 children affected keeps every genotype and every
+    relationship real while giving the models something to run on.
+    """
+    with open(FULL_PED) as fh:
+        rows = [ln.split() for ln in fh if ln.strip() and not ln.startswith("#")]
+    sibs = {r[1] for r in rows if r[2] == "NA12877" and r[3] == "NA12878"}
+    affected = set(sorted(sibs)[:3])
+    ped_path = tmp_path / "affected.ped"
+    with open(ped_path, "w") as fh:
+        for r in rows:
+            fh.write("\t".join(r[:5] + ["2" if r[1] in affected else "1"]) + "\n")
+    return ped_path
+
+
+# --- checks 2 and 5 on the same real data ----------------------------------
+#
+# Check 1 was validated here first; checks 2 and 5 rested on synthetic fixtures
+# alone, which is the weaker evidence this file exists to avoid.  Running them
+# against CEPH found two real defects, and these tests hold the repairs in
+# place against real freebayes + VEP output rather than against a fixture
+# written to match the code.
+
+
+def test_allele_balance_is_actually_computed_on_freebayes_output():
+    """freebayes writes RO/AO; reading only AD made this arm silently inert."""
+    from admissible.checks.genotype import check_genotype
+
+    res = check_genotype([str(VCF)])
+    flags: dict[str, int] = {}
+    for v in res.metrics["per_sample"].values():
+        for k, n in v["flags"].items():
+            flags[k] = flags.get(k, 0) + n
+    # Before the fix both of these were exactly zero across all 17 samples.
+    assert flags.get("AB_SKEW", 0) > 100
+    assert flags.get("ALLELE_IMBALANCE_HOM", 0) > 0
+    # And allele balance finds false homozygotes the likelihood arm does not.
+    assert flags["FALSE_HOM_SUSPECT"] > flags["HOM_CONTRADICTED_BY_LIKELIHOOD"]
+
+
+def test_compound_het_is_evaluable_on_vep_annotation(tmp_path):
+    """The CEPH VCF carries full VEP CSQ; compound-het must not be UNKNOWN."""
+    from admissible.checks.models import check_models
+
+    ped_path = _ped_with_three_affected_sibs(tmp_path)
+
+    matrix = load_cohort([str(VCF)])
+    res = check_models(matrix, read_ped(ped_path))
+    entry = next(e for e in res.metrics["profile"] if e["model"] == "compound-het")
+    assert entry["status"] == "computed"     # was "not-applicable" before the fix
+    assert entry["n_candidates"] > 0
+
+
+def test_the_de_novo_count_on_real_data_is_qualified(tmp_path):
+    """29 apparent de novos over ~20k sites in three sibs is all error.
+
+    The number itself is not wrong - it is what the segregation filter finds -
+    but reported bare it reads as a mutation count, which is how it ends up in
+    a manuscript. The caveat has to travel with it.
+    """
+    from admissible.checks.models import check_models
+
+    ped_path = _ped_with_three_affected_sibs(tmp_path)
+
+    res = check_models(load_cohort([str(VCF)]), read_ped(ped_path))
+    entry = next(e for e in res.metrics["profile"] if e["model"] == "de-novo")
+    assert entry["n_candidates"] > 0
+    assert "dominated by genotyping error" in entry["caveat"]

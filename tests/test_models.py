@@ -302,3 +302,63 @@ def test_models_without_an_exclusion_clause_are_unaffected(tmp_path):
     prof = {m["model"]: m for m in res.metrics["profile"]}
     assert prof["dominant-reduced-penetrance"]["n_candidates"] == 1
     assert prof["dominant-reduced-penetrance"]["n_exclusion_unverified"] == 0
+
+
+# --- gene assignment from VEP / SnpEff --------------------------------------
+
+
+def test_vep_csq_supplies_the_gene_for_compound_het(tmp_path):
+    """Compound-het was unevaluable on VEP-annotated VCFs, i.e. on most of them.
+
+    VEP declares its own pipe-delimited layout in the CSQ header line, so the
+    gene column has to be located rather than assumed. Found by running check 5
+    on the public CEPH 1463 call set, where compound-het reported
+    not-applicable despite the file carrying full VEP annotation.
+    """
+    from admissible.vcfio import SiteIndex, scan_vcf
+
+    p = tmp_path / "vep.vcf"
+    p.write_text(
+        "##fileformat=VCFv4.2\n"
+        '##INFO=<ID=CSQ,Number=.,Type=String,Description="Consequence type as '
+        'predicted by VEP. Format: Consequence|Codons|Gene|SYMBOL|Feature">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+        "chr1\t100\t.\tA\tG\t50\tPASS\tCSQ=missense|gTt/gCt|ENSG001|NOD2|ENST1"
+        "\tGT\t0/1\n"
+        "chr1\t200\t.\tC\tT\t50\tPASS\tCSQ=missense|cGg/cAg|ENSG001|NOD2|ENST1"
+        "\tGT\t0/1\n"
+    )
+    scan = scan_vcf(p, SiteIndex())
+    assert scan.header.csq_gene == ("CSQ", 3)      # the SYMBOL column
+    assert sorted(scan.site_gene.values()) == ["NOD2", "NOD2"]
+
+
+def test_snpeff_ann_supplies_the_gene(tmp_path):
+    from admissible.vcfio import SiteIndex, scan_vcf
+
+    p = tmp_path / "snpeff.vcf"
+    p.write_text(
+        "##fileformat=VCFv4.2\n"
+        '##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: '
+        "'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID'\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+        "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense_variant|MODERATE|IL10RA|ENSG9"
+        "\tGT\t0/1\n"
+    )
+    scan = scan_vcf(p, SiteIndex())
+    assert scan.header.csq_gene == ("ANN", 3)      # Gene_Name
+    assert list(scan.site_gene.values()) == ["IL10RA"]
+
+
+def test_a_de_novo_count_carries_its_error_caveat(joint):
+    """A raw de-novo count at exome scale is error, not mutation."""
+    from admissible.checks.models import check_models
+    from admissible.ped import read_ped
+    from admissible.vcfio import load_cohort
+
+    matrix = load_cohort([joint["vcf"]])
+    res = check_models(matrix, read_ped(joint["ped"]))
+    entry = next(e for e in res.metrics["profile"] if e["model"] == "de-novo")
+    if entry["status"] == "computed" and entry["n_candidates"]:
+        assert "dominated by genotyping error" in entry["caveat"]
+        assert any("de-novo" in n and "worklist" in n for n in res.notes)

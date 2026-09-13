@@ -140,3 +140,47 @@ def test_never_raises_on_garbage(tmp_path):
     p = tmp_path / "junk.vcf"
     p.write_text("not a vcf\n\x00\x01\n#CHROM\tPOS\n1\t\n")
     assert check_genotype([p]).status in tuple(Status)
+
+
+# --- allele depth is not always spelled AD ---------------------------------
+
+
+def _one_sample_vcf(tmp_path, fmt, cell, info="AC=2"):
+    p = tmp_path / "one.vcf"
+    p.write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+        f"chr1\t1000\t.\tA\tG\t900\tPASS\t{info}\t{fmt}\t{cell}\n"
+    )
+    return p
+
+
+def test_freebayes_ro_ao_is_read_as_allele_depth(tmp_path):
+    """freebayes writes RO/AO, never AD.
+
+    Reading only AD left the whole allele-balance arm of this check inert on
+    freebayes output while the report still looked complete - no AB_SKEW on
+    heterozygotes, no ALLELE_IMBALANCE_HOM on homozygotes. Found by running the
+    check on the public CEPH 1463 call set.
+    """
+    # 40 reads, 4 of them alt, called hom-alt: contradicted by its own evidence.
+    vcf = _one_sample_vcf(tmp_path, "GT:DP:RO:AO", "1/1:40:36:4")
+    res = check_genotype([vcf])
+    flags = res.metrics["per_sample"]["S1"]["flags"]
+    assert flags.get("ALLELE_IMBALANCE_HOM") == 1
+    assert flags.get("FALSE_HOM_SUSPECT") == 1
+
+
+def test_dp4_is_read_as_allele_depth(tmp_path):
+    """Older samtools/bcftools pipelines write DP4 and nothing else."""
+    vcf = _one_sample_vcf(tmp_path, "GT:DP:DP4", "0/1:40:18,18,2,2")
+    res = check_genotype([vcf])
+    assert res.metrics["per_sample"]["S1"]["flags"].get("AB_SKEW") == 1
+
+
+def test_varscan_single_valued_ad_is_not_mistaken_for_gatk_ad(tmp_path):
+    """VarScan's AD is the ALT count alone; reading it as GATK's would invert it."""
+    vcf = _one_sample_vcf(tmp_path, "GT:DP:RD:AD", "1/1:40:2:38")
+    res = check_genotype([vcf])
+    # No allele-balance flag either way: the field was correctly not trusted.
+    assert "ALLELE_IMBALANCE_HOM" not in res.metrics["per_sample"]["S1"]["flags"]
