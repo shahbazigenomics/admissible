@@ -153,3 +153,28 @@ def test_the_csv_template_is_the_spreadsheet_shape(tmp_path, capsys):
     # What it prints is what the reader accepts.
     p = write(tmp_path, "t.csv", out.replace("S1,,,,", "S1,,,M,yes"))
     assert read_ped_table(p).individuals["S1"].affection is Affection.AFFECTED
+
+
+def test_a_person_listed_as_their_own_parent_is_reported(tmp_path):
+    """Found while demonstrating the tool on CEPH 1463.
+
+    Renaming a row without renaming the references to it leaves someone as
+    their own mother. The kinship recursion takes that at face value and
+    returns 0.5 for a pair that is nothing of the kind, so every reconciliation
+    downstream is measured against a number the pedigree never meant - and
+    nothing said so.
+    """
+    p = write(tmp_path, "self.csv", (
+        "sample,father,mother,sex,affected\n"
+        "MUM,,,F,no\n"
+        "KID,DAD,KID,F,yes\n"
+    ))
+    ped = read_ped_table(p)
+    assert any("own parent" in w for w in ped.warnings)
+
+
+def test_the_ped_reader_flags_it_too(tmp_path):
+    from admissible.ped import read_ped
+
+    p = write(tmp_path, "self.ped", "F\tA\tA\t0\t1\t2\n")
+    assert any("own parent" in w for w in read_ped(p).warnings)
