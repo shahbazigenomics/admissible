@@ -49,19 +49,18 @@ First release. All five checks implemented.
   pedigree accepted and a deliberately corrupted copy of it caught. Checks 2 and 5
   run on the same file, which is what exposed the `RO`/`AO` and `CSQ` gaps above.
   Reproducible by anyone — see the validation section of the README.
+- Real capture coverage: four unrelated 1000 Genomes exomes over
+  chr20:1,400,000–1,500,000, with the denominator taken independently from an
+  Ensembl GTF rather than from the coverage. Per-sample callable fractions
+  0.4768–0.7975; joint fraction across all four 0.3815; product of the
+  per-sample fractions 0.2232 — the shortcut is 41% low on real capture. 4,134 bp
+  is a small measurement and carries real sampling noise; see
+  `tests/data/1000g_exome_chr20/PROVENANCE.md`.
 - Synthetic fixtures with planted sample swaps, regenerated deterministically by
   scripts in `tests/fixtures/`.
 
 ### Known limitations
 
-- Check 4 has been exercised end-to-end on genuine `mosdepth --quantize 0:10:`
-  output, but the BAMs behind that output were simulated. Simulated coverage can
-  confirm that the quantize format is read correctly and that the intersection
-  arithmetic is right; it cannot establish how far the product understates the
-  joint fraction on a real capture, because that gap is set by the real
-  correlation structure of probe efficiency. Treat the printed product-vs-
-  intersection gap as demonstrated in principle and unmeasured in practice until
-  it has been run on a real exome.
 - The two-locus model is not implemented: the pairwise search needs an explicit
   multiple-testing treatment before any count is reportable.
 - Relationship degree beyond *related vs unrelated* is not adjudicated at typical

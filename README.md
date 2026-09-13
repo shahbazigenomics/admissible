@@ -229,6 +229,28 @@ printed bare it reads as a mutation count, so it now travels with that caveat.
 Reproduce with `git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy`
 then `pytest tests/test_public_ceph.py` (the tests skip if the data is absent).
 
+### Real capture coverage
+
+Check 4's central claim — that the joint callable fraction is an intersection and
+never a product — is measured rather than asserted, on four unrelated 1000
+Genomes exomes (Baylor, SRP000808) over chr20:1,400,000–1,500,000, against a
+denominator taken from an Ensembl GTF rather than from the coverage itself:
+
+| | fraction of target |
+|---|---|
+| HG00349 / HG00350 / HG00351 / HG00358 | 0.7383 / 0.7951 / 0.4768 / 0.7975 |
+| joint, all four callable at once | **0.3815** |
+| product of the per-sample fractions | **0.2232** |
+| three of four (phenocopy model) | 0.6870 |
+
+The product is 41% low, because the four lose coverage in the same places. At
+0.38 of the target searched, the strongest permitted claim is *exploratory; a
+causal variant cannot be excluded* — which is what the tool reports.
+
+4,134 bp over four samples is a small measurement and carries real sampling
+noise. It demonstrates the effect on real capture; it does not estimate its size
+in general.
+
 ## What this tool cannot see
 
 Callability here is depth-based, which makes it blind to structural variation. A
