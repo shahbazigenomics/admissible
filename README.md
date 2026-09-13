@@ -1,5 +1,6 @@
 # admissible
 
+[![PyPI](https://img.shields.io/pypi/v/admissible.svg)](https://pypi.org/project/admissible/)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22738502.svg)](https://doi.org/10.5281/zenodo.22738502)
 
 **Audit whether exome data can support an interpretation — before you interpret it.**
@@ -68,14 +69,19 @@ the pairwise search needs an explicit multiple-testing treatment first.
 ## Install
 
 ```bash
+pip install admissible
+```
+
+Or from source, which is what you want if you intend to run the test suite or
+regenerate the fixtures:
+
+```bash
 git clone https://github.com/shahbazigenomics/admissible
 cd admissible && pip install -e ".[dev]"
 ```
 
-Not on PyPI yet, so there is deliberately no `pip install admissible` line here
-to fail on.
-
-Zero required runtime dependencies, Python 3.10+.
+Zero required runtime dependencies, Python 3.10+. The command is `admissible`,
+abbreviated `adm`.
 
 ## Design decisions worth arguing with
 
