@@ -26,7 +26,7 @@ from .checks import (
     check_models,
     check_provenance,
 )
-from .checks.callability import load_coverage
+from .checks.callability import CallabilityConfig, load_coverage
 from .checks.models import ModelConfig
 from .model import Report, Status
 from .ped import read_ped
@@ -60,6 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
             "--coverage", action="append", default=[], metavar="LABEL=BED",
             help="callable regions for one sample; repeat per sample. Accepts a "
                  "mosdepth --quantize output directly.",
+        )
+        sp.add_argument(
+            "--min-depth", type=int, default=10, metavar="X",
+            help="depth at or above which a position counts as callable "
+                 "(default 10). Depth bins are selected by their own lower "
+                 "bound, so any --quantize binning works.",
         )
         sp.add_argument(
             "--target", type=Path, default=None,
@@ -131,11 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         for item in getattr(args, "coverage", []):
             label, path = item.split("=", 1)
             spec[label] = path
+        cov_cfg = CallabilityConfig(min_depth=args.min_depth)
         report.checks.append(
             check_callability(
-                load_coverage(spec) if spec else None,
+                load_coverage(spec, cov_cfg) if spec else None,
                 ped,
                 target_bed=args.target,
+                cfg=cov_cfg,
                 # --family is a free-text report label; only use it to select
                 # affected samples when it actually names a family in the PED.
                 family_id=(
