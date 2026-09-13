@@ -35,9 +35,42 @@ GENE_INFO_KEYS = ("Gene.refGene", "Gene.refGeneWithVer", "Gene.knownGene", "GENE
 # block, in preference order: a symbol groups compound heterozygotes the way a
 # clinician reads them, an Ensembl id does so correctly but unreadably.
 _CSQ_GENE_FIELDS = ("SYMBOL", "Gene_Name", "Gene", "Gene_ID", "GeneID")
+_CSQ_CONSEQUENCE_FIELDS = ("Consequence", "Annotation")
 _CSQ_FORMAT_RE = re.compile(
     r"(?:Format|Functional annotations):\s*'?\s*(.+?)\s*'?\s*(?:\"|>)", re.IGNORECASE
 )
+
+# Sequence Ontology terms mapped onto the coarse region classes check 3 reasons
+# about.  Only the two classes that decide "is this a whole exome or a
+# coding-only extract" are mapped; everything else is counted under its own term
+# and contributes to the denominator, so an unmapped term can never be silently
+# read as coding.
+_SO_CODING = frozenset({
+    "missense_variant", "synonymous_variant", "stop_gained", "stop_lost",
+    "start_lost", "frameshift_variant", "inframe_insertion", "inframe_deletion",
+    "protein_altering_variant", "coding_sequence_variant", "incomplete_terminal_codon_variant",
+    "stop_retained_variant", "start_retained_variant",
+    "splice_acceptor_variant", "splice_donor_variant", "splice_region_variant",
+    "splice_donor_5th_base_variant", "splice_donor_region_variant",
+    "splice_polypyrimidine_tract_variant",
+})
+_SO_INTRONIC = frozenset({"intron_variant", "non_coding_transcript_variant"})
+
+
+def csq_field_index(header_line: str, wanted: tuple[str, ...]) -> tuple[str, int] | None:
+    """Locate one named sub-field inside a VEP ``CSQ`` / SnpEff ``ANN`` block."""
+    m = _ID_RE.search(header_line)
+    if not m or m.group(1) not in ("CSQ", "ANN"):
+        return None
+    fmt = _CSQ_FORMAT_RE.search(header_line)
+    if not fmt:
+        return None
+    cols = [c.strip() for c in fmt.group(1).split("|")]
+    for want in wanted:
+        for i, c in enumerate(cols):
+            if c.lower() == want.lower():
+                return m.group(1), i
+    return None
 
 
 def csq_gene_index(header_line: str) -> tuple[str, int] | None:
@@ -48,18 +81,7 @@ def csq_gene_index(header_line: str) -> tuple[str, int] | None:
     ANNOVAR-style flat keys were understood before, which left compound-het
     unevaluable on VEP- or SnpEff-annotated VCFs - that is, on most of them.
     """
-    m = _ID_RE.search(header_line)
-    if not m or m.group(1) not in ("CSQ", "ANN"):
-        return None
-    fmt = _CSQ_FORMAT_RE.search(header_line)
-    if not fmt:
-        return None
-    cols = [c.strip() for c in fmt.group(1).split("|")]
-    for want in _CSQ_GENE_FIELDS:
-        for i, c in enumerate(cols):
-            if c.lower() == want.lower():
-                return m.group(1), i
-    return None
+    return csq_field_index(header_line, _CSQ_GENE_FIELDS)
 
 
 def encode_gt(gt: str) -> int:
@@ -98,6 +120,9 @@ class VcfHeader:
     n_header_lines: int = 0
     # (INFO key, index of the gene sub-field) for a VEP CSQ or SnpEff ANN block.
     csq_gene: tuple[str, int] | None = None
+    # The same, for the consequence sub-field, which is what check 3 needs to
+    # answer "is this a whole exome or a coding-only extract".
+    csq_consequence: tuple[str, int] | None = None
 
 
 @dataclass
@@ -258,6 +283,8 @@ def _parse_meta(line: str, header: VcfHeader) -> None:
             header.info_keys.add(m.group(1))
         if (found := csq_gene_index(line)) is not None:
             header.csq_gene = found
+        if (found := csq_field_index(line, _CSQ_CONSEQUENCE_FIELDS)) is not None:
+            header.csq_consequence = found
     elif line.startswith("##FORMAT="):
         if m := _ID_RE.search(line):
             header.format_keys.add(m.group(1))
@@ -339,6 +366,35 @@ def _consume_record(
                 cls = cls.strip()
                 if cls:
                     stats.region_counts[cls] = stats.region_counts.get(cls, 0) + 1
+        elif (
+            header.csq_consequence is not None
+            and k == header.csq_consequence[0]
+            and v
+            # ANNOVAR's own class, where present, wins: mixing two annotators'
+            # answers into one tally would make the fractions meaningless.
+            and not (stats.annotation_source or "").startswith("ANNOVAR")
+        ):
+            # VEP and SnpEff answer the same question as Func.refGene, in
+            # Sequence Ontology terms and one block per transcript.  A site is
+            # classed by the most consequential term any transcript gives it,
+            # which is how a clinician reads it and how ANNOVAR's single value
+            # behaves - taking the first transcript instead would class a coding
+            # variant as intronic whenever VEP happened to list an intron-
+            # containing transcript first.
+            stats.annotation_source = f"VEP/SnpEff:{header.csq_consequence[0]}"
+            idx = header.csq_consequence[1]
+            terms: set[str] = set()
+            for block in v.split(","):
+                parts = block.split("|")
+                if idx < len(parts) and parts[idx].strip():
+                    terms.update(t.strip() for t in parts[idx].split("&") if t.strip())
+            if terms & _SO_CODING:
+                cls = "exonic"
+            elif terms & _SO_INTRONIC:
+                cls = "intronic"
+            else:
+                cls = "other"
+            stats.region_counts[cls] = stats.region_counts.get(cls, 0) + 1
 
     if len(fields) < 10 or not header.samples:
         return True  # sites-only VCF; check 3 reports FORMAT stripped
@@ -382,6 +438,11 @@ class GenotypeMatrix:
     source: dict[str, str] = field(default_factory=dict)
     dense: dict[str, bool] = field(default_factory=dict)
     scans: dict[str, VcfScan] = field(default_factory=dict)
+    # Every file that was read, in the order given, whether or not it contained
+    # any samples.  ``scans`` is keyed by sample and therefore cannot represent a
+    # sites-only VCF at all - and a sites-only VCF is exactly what check 3 exists
+    # to name, so it must not disappear on the way there.
+    files: list[VcfScan] = field(default_factory=list)
     site_gene: dict[int, str] = field(default_factory=dict)
     site_af: dict[int, float] = field(default_factory=dict)
 
@@ -446,6 +507,7 @@ def load_cohort(
             if looks_like_multianno(path)
             else scan_vcf(path, index, af_key=af_key)
         )
+        matrix.files.append(scan)
         matrix.site_gene.update(scan.site_gene)
         matrix.site_af.update(scan.site_af)
         for sample in scan.header.samples:

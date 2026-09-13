@@ -104,9 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     matrix = load_cohort(list(args.vcf), af_key=args.af_field) if args.vcf else None
-    scans = (
-        list({id(s): s for s in matrix.scans.values()}.values()) if matrix else []
-    )
+    # Every file read, not every file that happened to contain a sample: a
+    # sites-only VCF has no samples and is precisely what check 3 must report on.
+    scans = list(matrix.files) if matrix else []
     ped = read_ped(args.ped) if getattr(args, "ped", None) else None
 
     family = args.family
