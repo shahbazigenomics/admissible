@@ -69,8 +69,13 @@ the pairwise search needs an explicit multiple-testing treatment first.
 ## Install
 
 ```bash
-pip install admissible
+pipx install admissible   # recommended: its own environment, nothing else touched
+pip install admissible    # or into the environment you are already in
 ```
+
+`pipx` is worth the extra word here. A command-line tool installed with `pip` goes
+into whichever environment happens to be active — frequently a conda `base` shared
+with everything else you run — and this tool has no reason to be there.
 
 Or from source, which is what you want if you intend to run the test suite or
 regenerate the fixtures:
@@ -80,8 +85,8 @@ git clone https://github.com/shahbazigenomics/admissible
 cd admissible && pip install -e ".[dev]"
 ```
 
-Zero required runtime dependencies, Python 3.10+. The command is `admissible`,
-abbreviated `adm`.
+Zero required runtime dependencies. Tested in CI on Python 3.10 through 3.14.
+The command is `admissible`, abbreviated `adm`.
 
 ## Design decisions worth arguing with
 
