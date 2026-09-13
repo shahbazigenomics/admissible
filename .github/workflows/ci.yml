@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q
+
+  public-validation:
+    # Runs check 1 against CEPH pedigree 1463, which has published truth.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy
+      - run: pytest -q tests/test_public_ceph.py
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .
+      # The fixture cohort must keep failing for the right reasons: a green run
+      # here would mean the tool stopped finding the planted swaps.
+      - run: python tests/fixtures/make_fixtures.py
+      - name: audit exits 1 on the broken cohort
+        run: |
+          set +e
+          admissible audit tests/fixtures/cohort/FAM*.vcf \
+            --ped tests/fixtures/cohort/cohort.ped --json report.json
+          test $? -eq 1
+      - run: python -c "import json;d=json.load(open('report.json'));assert d['verdict']=='NOT INTERPRETABLE',d['verdict']"
