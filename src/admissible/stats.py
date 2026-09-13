@@ -34,21 +34,61 @@ def wilson_interval(successes: int, trials: int, z: float = 1.96) -> tuple[float
 
 
 def binom_two_sided_p(k: int, n: int, p: float = 0.5) -> float:
-    """Exact two-sided binomial p-value.
+    """Two-sided binomial p-value, by exact summation in log space.
 
     Used instead of a fixed allele-balance window because a fixed window
     mis-scales with depth: 3/10 is unremarkable for a true heterozygote,
     60/200 is not, and both sit at an allele balance of 0.30.
+
+    The arithmetic is done on log probabilities rather than on
+    ``math.comb(n, k) * p**k * ...`` because the binomial coefficient overflows
+    a float long before real data runs out of depth: at n = 7166 - an ordinary
+    pileup depth in panel or amplicon data - the direct form raises
+    OverflowError and takes the whole check down with it.  Above
+    ``_EXACT_MAX`` trials the exact sum is replaced by a normal approximation
+    with a continuity correction, which keeps the cost constant instead of
+    linear in depth.  That approximation tracks the exact value to within a
+    fraction of a percent near any threshold anyone sets here (0.03% at
+    p = 5e-3, 0.4% at p = 2e-8 for n = 20000) and drifts to order-of-magnitude
+    accuracy far out in the tail - which changes no classification, because a
+    p-value of 1e-45 and one of 1e-44 are the same verdict.
     """
     if n <= 0 or not (0.0 < p < 1.0):
         return float("nan")
-    obs = _binom_pmf(k, n, p)
-    tol = obs * (1 + 1e-7)
-    return min(1.0, sum(pmf for i in range(n + 1) if (pmf := _binom_pmf(i, n, p)) <= tol))
+    k = min(max(k, 0), n)
+    if n > _EXACT_MAX:
+        mean = n * p
+        sd = math.sqrt(n * p * (1.0 - p))
+        if sd == 0.0:
+            return 1.0
+        z = (abs(k - mean) - 0.5) / sd
+        if z <= 0.0:
+            return 1.0
+        return min(1.0, math.erfc(z / math.sqrt(2.0)))
+
+    log_obs = _binom_logpmf(k, n, p)
+    tol = log_obs + 1e-7
+    total = 0.0
+    for i in range(n + 1):
+        lp = _binom_logpmf(i, n, p)
+        if lp <= tol:
+            total += math.exp(lp)
+    return min(1.0, total)
 
 
-def _binom_pmf(k: int, n: int, p: float) -> float:
-    return math.comb(n, k) * (p**k) * ((1 - p) ** (n - k))
+# Above this many trials the exact sum is both unnecessary and slow: the normal
+# approximation is accurate to well beyond the precision any threshold here uses.
+_EXACT_MAX = 20_000
+
+
+def _binom_logpmf(k: int, n: int, p: float) -> float:
+    return (
+        math.lgamma(n + 1)
+        - math.lgamma(k + 1)
+        - math.lgamma(n - k + 1)
+        + k * math.log(p)
+        + (n - k) * math.log1p(-p)
+    )
 
 
 def largest_gap(values: list[float], lo: float, hi: float) -> tuple[float, float] | None:

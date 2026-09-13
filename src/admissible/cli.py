@@ -51,8 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
             "vcf", nargs="+" if need_vcf else "*", type=Path,
             help="VCF/VCF.gz files, or ANNOVAR *_multianno.txt tables",
         )
-        if need_ped:
-            sp.add_argument("--ped", type=Path, required=True, help="PED file")
+        # Always accepted; only required by the checks that cannot answer
+        # without it. Check 1 uses a pedigree to reconcile against, but sex
+        # inference and duplicate detection do not need one.
+        sp.add_argument(
+            "--ped", type=Path, required=need_ped,
+            help="PED file" + ("" if need_ped else " (optional for this check)"),
+        )
         sp.add_argument("--family", default=None, help="family id to label the report")
         sp.add_argument("--json", type=Path, default=None, help="write the JSON report here")
         sp.add_argument("--build", default=None, choices=["GRCh37", "GRCh38"])
@@ -84,7 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("-v", "--verbose", action="store_true", help="print every finding")
 
     common(sub.add_parser("audit", help="run every check and print the one-page verdict"))
-    common(sub.add_parser("identity", help="check 1 only: sample identity"))
+    # Sex inference and duplicate detection need no pedigree, and an unpedigreed
+    # cohort is exactly when "are any two of these the same person" matters most.
+    common(sub.add_parser("identity", help="check 1 only: sample identity"), need_ped=False)
     common(sub.add_parser("provenance", help="check 3 only: content provenance"), need_ped=False)
     common(sub.add_parser("genotype", help="check 2 only: genotype confidence"), need_ped=False)
     common(
