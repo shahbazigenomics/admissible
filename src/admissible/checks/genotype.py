@@ -95,6 +95,44 @@ def _num(value: str | None) -> float | None:
         return None
 
 
+def _allele_counts(
+    cell: dict[str, str], info: dict[str, str]
+) -> tuple[float | None, float | None, str | None]:
+    """Reference and alternate read counts, from whichever field carries them.
+
+    ``AD`` is GATK's spelling and is far from universal: freebayes writes
+    ``RO``/``AO``, and older samtools/bcftools pipelines write ``DP4``.  Reading
+    only ``AD`` meant the allele-balance arm of this check silently did nothing
+    on freebayes output - no ``AB_SKEW``, no ``ALLELE_IMBALANCE_HOM`` - while
+    the report still looked complete.  Found by running the check on the public
+    CEPH 1463 call set.
+
+    VarScan's single-valued ``AD`` (alt count only, with ``RD`` for reference)
+    is deliberately not read as GATK's: the third element of the return value
+    names the field actually used, so the source is auditable rather than
+    guessed at.
+    """
+    ad = cell.get("AD", "")
+    if ad:
+        parts = [_num(p) for p in ad.split(",")]
+        if len(parts) >= 2 and all(p is not None for p in parts):
+            return parts[0], sum(parts[1:]), "AD"  # type: ignore[arg-type]
+
+    ro, ao = _num(cell.get("RO")), cell.get("AO", "")
+    if ro is not None and ao:
+        alts = [_num(p) for p in ao.split(",")]
+        if all(a is not None for a in alts):
+            return ro, sum(alts), "RO/AO"  # type: ignore[arg-type]
+
+    dp4 = cell.get("DP4") or info.get("DP4", "")
+    if dp4:
+        parts = [_num(p) for p in dp4.split(",")]
+        if len(parts) == 4 and all(p is not None for p in parts):
+            return parts[0] + parts[1], parts[2] + parts[3], "DP4"  # type: ignore[operator]
+
+    return None, None, None
+
+
 def _pl_list(cell: dict[str, str]) -> list[int] | None:
     raw = cell.get("PL")
     scale = 1.0
@@ -134,17 +172,17 @@ def evaluate_genotype(
 
     dp = _num(cell.get("DP")) or _num(info.get("DP"))
     gq = _num(cell.get("GQ"))
-    ad = cell.get("AD", "")
-    ref_n = alt_n = None
-    if ad:
-        parts = [_num(p) for p in ad.split(",")]
-        if len(parts) >= 2 and all(p is not None for p in parts):
-            ref_n = parts[0]
-            alt_n = sum(parts[1:])
+    ref_n, alt_n, ad_source = _allele_counts(cell, info)
     total = (ref_n + alt_n) if (ref_n is not None and alt_n is not None) else None
     ab = (alt_n / total) if (total and total > 0) else None
     pl = _pl_list(cell)
-    ev |= {"DP": dp, "GQ": gq, "AD": ad or None, "allele_balance": ab}
+    ev |= {
+        "DP": dp,
+        "GQ": gq,
+        "AD": cell.get("AD") or None,
+        "allele_depth_source": ad_source,
+        "allele_balance": ab,
+    }
 
     if dp is not None:
         if dp < cfg.low_depth:

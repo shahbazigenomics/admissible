@@ -68,6 +68,9 @@ class ModelResult:
     # Sites that fit the model only because a sample whose non-carriage the model
     # depends on had no genotype there. Never folded into n_candidates.
     n_exclusion_unverified: int = 0
+    # Stated next to the count, never folded into it: what the number is known
+    # to be contaminated by before anyone starts reading candidates.
+    caveat: str = ""
 
     def to_dict(self) -> dict:
         d = {
@@ -81,6 +84,8 @@ class ModelResult:
         }
         if self.reason:
             d["reason"] = self.reason
+        if self.caveat:
+            d["caveat"] = self.caveat
         if self.examples:
             d["examples"] = self.examples
         return d
@@ -158,7 +163,8 @@ def check_models(
         """True when every sample the model relies on NOT carrying was observed."""
         return all(gt(u, site) != MISSING for u in who)
 
-    def record(name, predicate, required=None, applicable=True, reason="", excludes=None):
+    def record(name, predicate, required=None, applicable=True, reason="",
+               excludes=None, caveat=""):
         if not applicable:
             results.append(
                 ModelResult(name, "not-applicable", reason=reason, samples_required=required)
@@ -184,6 +190,7 @@ def check_models(
                 examples=[_locus(matrix, s) for s in hits[: cfg.max_examples]],
                 samples_required=required,
                 n_exclusion_unverified=unverified,
+                caveat=caveat,
             )
         )
 
@@ -313,6 +320,14 @@ def check_models(
         applicable=bool(trios),
         reason="no affected sample has both parents genotyped",
         excludes=[],
+        caveat=(
+            "an unfiltered de-novo count is dominated by genotyping error, not by "
+            "de-novo mutation: the germline rate is about 1.3e-8 per base per "
+            "generation, so a whole exome expects well under one true de novo per "
+            "proband, and counts one to two orders of magnitude above that are "
+            "normal before depth, GQ and allele-balance filtering. Treat this "
+            "number as a worklist, never as a rate"
+        ),
     )
     record(
         "phenocopy(n-1)",
@@ -371,6 +386,9 @@ def check_models(
 
     findings: list[Finding] = []
     notes: list[str] = []
+    for r in computed:
+        if r.caveat and r.n_candidates:
+            notes.append(f"{r.name} ({r.n_candidates} candidates): {r.caveat}")
     if not rarity_applied:
         notes.append(
             "counts are segregation-only and NOT rarity-filtered: no allele-frequency "
