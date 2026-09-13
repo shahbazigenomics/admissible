@@ -9,7 +9,9 @@ First release. All five checks implemented.
 
 ### Added
 
-- **Check 1 — sample identity.** Sex inference from chrX heterozygosity with PAR and
+- **Check 1 — sample identity.** Runs with or without a pedigree: sex inference
+  and cohort-wide duplicate detection need none, and an unpedigreed cohort is
+  when "are any two of these the same person" matters most. Sex inference from chrX heterozygosity with PAR and
   XTR excluded, reported as a Wilson interval with an explicit *not determined* state.
   Cohort-wide duplicate detection (never within-family) with evidence-based typing.
   Relatedness by KING-robust kinship and IBS0 where samples were jointly genotyped, and
@@ -20,7 +22,9 @@ First release. All five checks implemented.
   the evidence; VarScan's single-valued `AD` is deliberately not read as GATK's.
   False-homozygote detection separating
   `LOW_DEPTH_HOM`, `HOM_CONTRADICTED_BY_LIKELIHOOD` and `ALLELE_IMBALANCE_HOM`. Allele
-  balance by exact binomial test rather than a fixed window. Site-level quality flags,
+  balance by a two-sided binomial test rather than a fixed window, computed in
+  log space so that deep coverage (panel or amplicon depths in the thousands)
+  cannot overflow it. Site-level quality flags,
   segmental-duplication and clustered-variant flags, and detection of call sets that
   were never variant-quality filtered.
 - **Check 3 — content provenance.** `CODING_ONLY`, `PASS_FILTERED`, `SUBSET`,
