@@ -182,7 +182,18 @@ def main(argv: list[str] | None = None) -> int:
 
     family = args.family
     if family is None and ped is not None and ped.families:
-        fams = sorted(ped.families)
+        # Label the report with the families actually represented among the
+        # samples supplied, not with every family the PED happens to contain.
+        # A PED is commonly a whole-cohort file reused for a single family's
+        # run, and naming families that were never analysed on the headline
+        # line of the report is precisely the overclaim this tool exists to
+        # catch. Fall back to the PED's own families only when no sample was
+        # loaded at all (a coverage-only run of check 4).
+        present = set(matrix.samples) if matrix else set()
+        fams = sorted(
+            fam for fam, members in ped.families.items()
+            if not present or present.intersection(members)
+        ) or sorted(ped.families)
         family = fams[0] if len(fams) == 1 else f"{len(fams)} families: {','.join(fams)}"
     report = Report(family_id=family or "unspecified", tool_version=__version__)
     report.inputs = {
