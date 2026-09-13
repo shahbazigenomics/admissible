@@ -27,7 +27,18 @@ from __future__ import annotations
 import os
 
 from .contigs import is_primary, normalize_contig
-from .vcfio import HET, HOMALT, HOMREF, MISSING, SiteIndex, VcfHeader, VcfScan, VcfStats, _sha256
+from .vcfio import (
+    HET,
+    HOMALT,
+    HOMREF,
+    MISSING,
+    SiteIndex,
+    VcfHeader,
+    VcfScan,
+    VcfStats,
+    _sha256,
+    encode_gt,
+)
 
 REGION_COLUMNS = ("Func.refGene", "Func.refGeneWithVer", "Func.knownGene")
 
@@ -69,6 +80,7 @@ def _locate_columns(header: list[str], first_row: list[str]) -> dict[str, int] |
     other = [i for i, h in enumerate(header) if h.startswith("Otherinfo")]
     if not other:
         return None
+    last = max(other)
     # Validate a candidate layout against the data rather than trusting a fixed
     # offset: an INFO field stripped down to a single key (it happens) has no
     # semicolon, so the anchor has to be the CHROM/POS pair, not the INFO shape.
@@ -81,9 +93,30 @@ def _locate_columns(header: list[str], first_row: list[str]) -> dict[str, int] |
         }
         if max(cols.values()) >= len(first_row):
             continue
-        if first_row[cols["pos"]].isdigit() and first_row[cols["chrom"]]:
-            return cols
+        if not (first_row[cols["pos"]].isdigit() and first_row[cols["chrom"]]):
+            continue
+        # `table_annovar.pl --vcfinput` - the standard invocation - keeps the
+        # original FORMAT and sample columns immediately after INFO.  They are
+        # the genotype, verbatim; reconstructing one from AC/AN while the real
+        # thing sits two columns to the right is how a 1/2 call becomes a
+        # homozygote.
+        if i + 2 <= last and i + 2 < len(first_row):
+            fmt = first_row[i + 1].strip()
+            keys = fmt.split(":")
+            if keys and keys[0] == "GT" and _looks_like_genotype(first_row[i + 2]):
+                cols["format"] = i + 1
+                cols["sample"] = i + 2
+        return cols
     return None
+
+
+def _looks_like_genotype(cell: str) -> bool:
+    gt = cell.split(":")[0].strip()
+    if not gt or len(gt) > 7:
+        return False
+    sep = "/" if "/" in gt else "|" if "|" in gt else None
+    parts = gt.split(sep) if sep else [gt]
+    return all(p == "." or p.isdigit() for p in parts) and bool(parts)
 
 
 def _ac_total(ac: str) -> int | None:
@@ -229,7 +262,20 @@ def scan_multianno(
                     if cls:
                         stats.region_counts[cls] = stats.region_counts.get(cls, 0) + 1
 
-                code, provisional_ac = genotype_from_info(info)
+                cell: dict[str, str] = {}
+                if "sample" in cols and cols["sample"] < len(row):
+                    keys = row[cols["format"]].split(":")
+                    vals = row[cols["sample"]].split(":")
+                    cell = dict(zip(keys, vals, strict=False))
+                    stats.format_keys_seen.update(keys)
+                    stats.has_format_column = True
+
+                if cell.get("GT"):
+                    code, provisional_ac = encode_gt(cell["GT"]), None
+                    if code == HOMREF:
+                        scan.has_explicit_homref[sample] = True
+                else:
+                    code, provisional_ac = genotype_from_info(info)
                 if code == MISSING:
                     n_unassessable += 1
                     continue
@@ -283,9 +329,12 @@ def scan_multianno(
             f"{n_unassessable} record(s) had no usable AN=2/AC, so no genotype could be "
             f"reconstructed for them"
         )
-    # These tables never carry FORMAT, which is a real limitation, not a defect
-    # in the file: depth, GQ and allele balance are simply not recoverable here.
-    scan.stats.format_keys_seen = set()
+    # A table produced without --vcfinput genuinely has no FORMAT block, and
+    # there depth, GQ and allele balance are not recoverable - a real limitation
+    # of the file, not a defect. Where ANNOVAR did keep the sample column, those
+    # fields are present and are reported as present.
+    if not scan.stats.has_format_column:
+        scan.stats.format_keys_seen = set()
     return scan
 
 
@@ -330,7 +379,24 @@ def iter_multianno_records(path: str | os.PathLike[str], label: str | None = Non
             for kv in info_raw.split(";"):
                 k, _, v = kv.partition("=")
                 info[k] = v
-            code, _provisional = genotype_from_info(info)
+
+            cell: dict[str, str] = {}
+            if "sample" in cols and cols["sample"] < len(row):
+                cell = dict(
+                    zip(
+                        row[cols["format"]].split(":"),
+                        row[cols["sample"]].split(":"),
+                        strict=False,
+                    )
+                )
+            if cell.get("GT"):
+                # The real genotype, with the real DP/GQ/AD/PL beside it, so
+                # check 2 can examine an ANNOVAR-delivered analysis instead of
+                # declaring it unassessable.
+                code = encode_gt(cell["GT"])
+            else:
+                code, _provisional = genotype_from_info(info)
+                cell = {"GT": gt_text[code]}
             if code == MISSING:
                 continue
             yield Record(
@@ -341,6 +407,6 @@ def iter_multianno_records(path: str | os.PathLike[str], label: str | None = Non
                 qual=None,
                 filters=[x for x in filt.split(";") if x and x != "."],
                 info=info,
-                samples={sample: {"GT": gt_text[code]}},
+                samples={sample: cell},
                 lineno=lineno,
             )
