@@ -31,6 +31,36 @@ _ID_RE = re.compile(r"ID=([^,>]+)")
 # Gene-symbol keys written by the common annotators, in preference order.
 GENE_INFO_KEYS = ("Gene.refGene", "Gene.refGeneWithVer", "Gene.knownGene", "GENE", "Gene")
 
+# Sub-field names that carry a gene symbol inside a VEP ``CSQ`` or SnpEff ``ANN``
+# block, in preference order: a symbol groups compound heterozygotes the way a
+# clinician reads them, an Ensembl id does so correctly but unreadably.
+_CSQ_GENE_FIELDS = ("SYMBOL", "Gene_Name", "Gene", "Gene_ID", "GeneID")
+_CSQ_FORMAT_RE = re.compile(
+    r"(?:Format|Functional annotations):\s*'?\s*(.+?)\s*'?\s*(?:\"|>)", re.IGNORECASE
+)
+
+
+def csq_gene_index(header_line: str) -> tuple[str, int] | None:
+    """Locate the gene column inside a VEP/SnpEff annotation block.
+
+    Both annotators declare their pipe-delimited layout in the INFO header line
+    rather than fixing it, so the position has to be read from the file.  Only
+    ANNOVAR-style flat keys were understood before, which left compound-het
+    unevaluable on VEP- or SnpEff-annotated VCFs - that is, on most of them.
+    """
+    m = _ID_RE.search(header_line)
+    if not m or m.group(1) not in ("CSQ", "ANN"):
+        return None
+    fmt = _CSQ_FORMAT_RE.search(header_line)
+    if not fmt:
+        return None
+    cols = [c.strip() for c in fmt.group(1).split("|")]
+    for want in _CSQ_GENE_FIELDS:
+        for i, c in enumerate(cols):
+            if c.lower() == want.lower():
+                return m.group(1), i
+    return None
+
 
 def encode_gt(gt: str) -> int:
     """Map a GT string to 0 hom-ref / 1 het / 2 hom-alt / 3 missing.
@@ -66,6 +96,8 @@ class VcfHeader:
     filter_ids: set[str] = field(default_factory=set)
     reference: str | None = None
     n_header_lines: int = 0
+    # (INFO key, index of the gene sub-field) for a VEP CSQ or SnpEff ANN block.
+    csq_gene: tuple[str, int] | None = None
 
 
 @dataclass
@@ -224,6 +256,8 @@ def _parse_meta(line: str, header: VcfHeader) -> None:
     elif line.startswith("##INFO="):
         if m := _ID_RE.search(line):
             header.info_keys.add(m.group(1))
+        if (found := csq_gene_index(line)) is not None:
+            header.csq_gene = found
     elif line.startswith("##FORMAT="):
         if m := _ID_RE.search(line):
             header.format_keys.add(m.group(1))
@@ -278,6 +312,22 @@ def _consume_record(
         stats.info_keys_seen.add(k)
         if gene_value is None and k in GENE_INFO_KEYS and v and v != ".":
             gene_value = v.split(",")[0].split("\\x3b")[0].strip()
+        if (
+            gene_value is None
+            and header.csq_gene is not None
+            and k == header.csq_gene[0]
+            and v
+        ):
+            # A CSQ/ANN value is one block per transcript, comma-separated; the
+            # blocks at one site usually name the same gene, and where they do
+            # not, the first is the annotator's own primary choice.  Grouping
+            # compound heterozygotes needs one gene per site, so take it.
+            idx = header.csq_gene[1]
+            for block in v.split(","):
+                parts = block.split("|")
+                if idx < len(parts) and parts[idx].strip():
+                    gene_value = parts[idx].strip()
+                    break
         if af_key and k == af_key and v:
             try:
                 af_value = float(v.split(",")[0])
