@@ -184,3 +184,63 @@ def test_varscan_single_valued_ad_is_not_mistaken_for_gatk_ad(tmp_path):
     res = check_genotype([vcf])
     # No allele-balance flag either way: the field was correctly not trusted.
     assert "ALLELE_IMBALANCE_HOM" not in res.metrics["per_sample"]["S1"]["flags"]
+
+
+# --- three bugs found by asking "what does this do when the field is absent?" ---
+
+
+def test_info_dp_is_not_used_as_a_per_sample_depth_in_a_multisample_vcf(tmp_path):
+    """INFO/DP is the cohort total; using it per sample multiplies depth by N.
+
+    A ten-sample VCF with INFO DP=60 and no FORMAT/DP gave every sample an
+    apparent depth of 60 - six times the truth - so ten 6x homozygotes were
+    tallied as "at adequate depth" and the check returned PASS with no findings.
+    That is the exact failure this check exists to catch, committed by the check.
+    """
+    samples = [f"S{i}" for i in range(1, 11)]
+    p = tmp_path / "multi.vcf"
+    p.write_text(
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples) + "\n"
+        "chr1\t1000\t.\tA\tG\t900\tPASS\tDP=60\tGT:GQ\t"
+        + "\t".join(["1/1:99"] * len(samples)) + "\n"
+    )
+    res = check_genotype([p])
+    assert res.metrics["hom_at_adequate_depth"] == {
+        "n": 0, "flagged": 0, "depth_unknown": 10
+    }
+    assert res.metrics["per_sample"]["S1"]["flags"].get("HOM_NOT_ASSESSABLE") == 1
+    assert any(f.code == "HOM_NOT_ASSESSABLE" for f in res.findings)
+
+
+def test_info_dp_is_still_used_when_there_is_only_one_sample(tmp_path):
+    """Single-sample: INFO/DP and FORMAT/DP are the same number, so use it."""
+    p = _one_sample_vcf(tmp_path, "GT", "1/1", info="DP=4")
+    res = check_genotype([p])
+    assert res.metrics["per_sample"]["S1"]["flags"].get("LOW_DEPTH_HOM") == 1
+
+
+def test_a_multiallelic_hom_alt_is_judged_on_the_allele_it_called(tmp_path):
+    """Summing every ALT calls a 5-of-30 homozygote perfectly balanced."""
+    from admissible.checks.genotype import GenotypeConfig, evaluate_genotype
+
+    cfg = GenotypeConfig()
+    flags, ev = evaluate_genotype("1/1", {"DP": "30", "AD": "0,5,25"}, {}, cfg, True)
+    assert ev["allele_balance"] == pytest.approx(5 / 30)
+    assert "ALLELE_IMBALANCE_HOM" in flags and "FALSE_HOM_SUSPECT" in flags
+
+    # The same site with the reads actually behind the called allele is clean.
+    flags, ev = evaluate_genotype("1/1", {"DP": "30", "AD": "0,30,0"}, {}, cfg, True)
+    assert ev["allele_balance"] == pytest.approx(1.0)
+    assert flags == []
+
+
+def test_a_multiallelic_het_is_tested_on_its_two_called_alleles(tmp_path):
+    """Reads supporting a third allele say nothing about a 1/2 call's balance."""
+    from admissible.checks.genotype import GenotypeConfig, evaluate_genotype
+
+    cfg = GenotypeConfig()
+    flags, _ = evaluate_genotype("1/2", {"DP": "30", "AD": "0,15,15"}, {}, cfg, True)
+    assert "AB_SKEW" not in flags
+    flags, _ = evaluate_genotype("1/2", {"DP": "32", "AD": "2,28,2"}, {}, cfg, True)
+    assert "AB_SKEW" in flags

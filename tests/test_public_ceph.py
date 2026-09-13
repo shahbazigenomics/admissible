@@ -190,6 +190,9 @@ def test_allele_balance_is_actually_computed_on_freebayes_output():
     # Before the fix both of these were exactly zero across all 17 samples.
     assert flags.get("AB_SKEW", 0) > 100
     assert flags.get("ALLELE_IMBALANCE_HOM", 0) > 0
+    # Real data carries FORMAT/DP, so nothing here is depth-unassessable; if this
+    # ever trips, per-sample depth has stopped being read.
+    assert res.metrics["hom_at_adequate_depth"]["depth_unknown"] == 0
     # And allele balance finds false homozygotes the likelihood arm does not.
     assert flags["FALSE_HOM_SUSPECT"] > flags["HOM_CONTRADICTED_BY_LIKELIHOOD"]
 
