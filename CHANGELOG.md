@@ -51,6 +51,13 @@ First release. All five checks implemented.
   columns, the genotype is read from them and `DP`/`GQ`/`PL`/`AD` are available
   to check 2; the `AC`/`AN` reconstruction remains the fallback for tables that
   genuinely carry no FORMAT block.
+- **Pedigree input without hand-writing a PED.** `admissible ped-template
+  *.vcf` prints a skeleton carrying the sample names as they appear inside the
+  VCFs — the part that has to match — and `--csv` prints the spreadsheet shape
+  instead. `--ped` also accepts a headered CSV/TSV/xlsx written in words
+  (`M`/`female`, `yes`/`control`, a blank for a founder), with columns located
+  by name. An unrecognised value becomes *unknown* and is reported rather than
+  rounded to the plausible one. Format is decided by content, not by extension.
 - Text and JSON reports (schema `admissible/report/1`), per-check CLI subcommands,
   pipeline exit codes.
 

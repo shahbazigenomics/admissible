@@ -136,6 +136,48 @@ one. Truncated downloads, double-gzipped files, sites-only VCFs, headerless VCFs
 files that are not VCFs at all all produce a typed failure with a stated reason. The
 test suite fuzzes for this.
 
+## Giving it the pedigree
+
+A PED file works, but PED is positional and numeric — `2` means affected, `1`
+means unaffected — and getting that backwards produces no error at all: check 5
+simply finds nothing to segregate. Two easier routes:
+
+**Start from your VCFs.** The ids in a pedigree have to match the sample names
+*inside* the VCFs, which nobody can see without looking, and a mismatch is the
+commonest way a first run goes quiet:
+
+```bash
+admissible ped-template family/*.vcf.gz > family.ped        # names already filled in
+admissible ped-template family/*.vcf.gz --csv > family.csv  # to fill in a spreadsheet
+```
+
+**Or hand it the spreadsheet you already keep.** Columns are found by name and
+values read in words; `--ped` takes it directly:
+
+```csv
+Family,Sample ID,Father,Mother,Sex,Affected
+IPC,IPC-1,,,Male,no
+IPC,IPC-2,,,Female,no
+IPC,IPC-3,IPC-1,IPC-2,M,yes
+IPC,IPC-4,IPC-1,IPC-2,F,yes
+```
+
+`sample`/`id`/`individual`, `father`/`pat`/`dad`, `mother`/`mat`/`mum`,
+`sex`/`gender`, `affected`/`status`/`phenotype`, `family`/`fid` are all
+recognised; so are `M`/`F`, `male`/`female`, `1`/`2`, `yes`/`no`,
+`case`/`control`. CSV, TSV and (with openpyxl) xlsx. The format is decided by
+what is in the file, not by its extension.
+
+A value that is *not* recognised becomes **unknown** and is reported — never
+rounded to the plausible one, because rounding is how `1`/`2` goes wrong
+silently in the first place. A blank parent means "not in the study"; a parent
+named but given no row of their own is flagged, since that is a real and easy
+mistake.
+
+Leave `--ped` off entirely and `admissible identity` still does sex inference
+and cohort-wide duplicate detection — which is the right first move on a cohort
+you have not pedigreed yet.
+
 ## Running the checks separately
 
 ```bash
