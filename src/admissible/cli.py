@@ -42,9 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"admissible {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    def common(sp: argparse.ArgumentParser, need_ped: bool = True) -> None:
+    def common(
+        sp: argparse.ArgumentParser, need_ped: bool = True, need_vcf: bool = True
+    ) -> None:
+        # Check 4 answers a question a VCF cannot answer, so it must not demand
+        # one: coverage BEDs and a target are the whole of its input.
         sp.add_argument(
-            "vcf", nargs="+", type=Path,
+            "vcf", nargs="+" if need_vcf else "*", type=Path,
             help="VCF/VCF.gz files, or ANNOVAR *_multianno.txt tables",
         )
         if need_ped:
@@ -77,7 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     common(sub.add_parser("identity", help="check 1 only: sample identity"))
     common(sub.add_parser("provenance", help="check 3 only: content provenance"), need_ped=False)
     common(sub.add_parser("genotype", help="check 2 only: genotype confidence"), need_ped=False)
-    common(sub.add_parser("callability", help="check 4 only: callable fraction"))
+    common(
+        sub.add_parser("callability", help="check 4 only: callable fraction"),
+        need_vcf=False,
+    )
     common(sub.add_parser("models", help="check 5 only: inheritance model sweep"))
     return p
 
@@ -90,8 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"admissible: no such file: {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    matrix = load_cohort(list(args.vcf), af_key=args.af_field)
-    scans = list({id(s): s for s in matrix.scans.values()}.values())
+    matrix = load_cohort(list(args.vcf), af_key=args.af_field) if args.vcf else None
+    scans = (
+        list({id(s): s for s in matrix.scans.values()}.values()) if matrix else []
+    )
     ped = read_ped(args.ped) if getattr(args, "ped", None) else None
 
     family = args.family
@@ -102,8 +111,8 @@ def main(argv: list[str] | None = None) -> int:
     report.inputs = {
         "vcfs": [str(p) for p in args.vcf],
         "ped": str(args.ped) if getattr(args, "ped", None) else None,
-        "n_samples": len(matrix.samples),
-        "n_sites": matrix.n_sites,
+        "n_samples": len(matrix.samples) if matrix else 0,
+        "n_sites": matrix.n_sites if matrix else 0,
     }
 
     cfg = IdentityConfig()
