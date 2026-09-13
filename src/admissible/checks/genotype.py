@@ -97,40 +97,47 @@ def _num(value: str | None) -> float | None:
 
 def _allele_counts(
     cell: dict[str, str], info: dict[str, str]
-) -> tuple[float | None, float | None, str | None]:
-    """Reference and alternate read counts, from whichever field carries them.
+) -> tuple[list[float] | None, str | None]:
+    """Per-allele read counts, from whichever field the caller wrote them in.
+
+    Returned **per allele** - index 0 is the reference, index *i* the *i*-th ALT -
+    rather than as a ref/alt pair, because at a multiallelic site the pair is not
+    a well-defined thing.  Summing every ALT and calling the result "alt support"
+    says a ``1/1`` call backed by 5 reads out of 30 is in perfect balance, when
+    the other 25 reads support a different allele entirely.
 
     ``AD`` is GATK's spelling and is far from universal: freebayes writes
     ``RO``/``AO``, and older samtools/bcftools pipelines write ``DP4``.  Reading
     only ``AD`` meant the allele-balance arm of this check silently did nothing
-    on freebayes output - no ``AB_SKEW``, no ``ALLELE_IMBALANCE_HOM`` - while
-    the report still looked complete.  Found by running the check on the public
-    CEPH 1463 call set.
+    on freebayes output - no ``AB_SKEW``, no ``ALLELE_IMBALANCE_HOM`` - while the
+    report still looked complete.  Found by running the check on the public CEPH
+    1463 call set.
 
-    VarScan's single-valued ``AD`` (alt count only, with ``RD`` for reference)
-    is deliberately not read as GATK's: the third element of the return value
-    names the field actually used, so the source is auditable rather than
-    guessed at.
+    VarScan's single-valued ``AD`` (alt count only, with ``RD`` for reference) is
+    deliberately not read as GATK's: the second element of the return value names
+    the field actually used, so the source is auditable rather than guessed at.
+    ``DP4`` carries no per-allele breakdown at all, so it yields two entries and
+    is therefore only usable at biallelic sites.
     """
     ad = cell.get("AD", "")
     if ad:
         parts = [_num(p) for p in ad.split(",")]
         if len(parts) >= 2 and all(p is not None for p in parts):
-            return parts[0], sum(parts[1:]), "AD"  # type: ignore[arg-type]
+            return [float(p) for p in parts], "AD"  # type: ignore[arg-type]
 
     ro, ao = _num(cell.get("RO")), cell.get("AO", "")
     if ro is not None and ao:
         alts = [_num(p) for p in ao.split(",")]
         if all(a is not None for a in alts):
-            return ro, sum(alts), "RO/AO"  # type: ignore[arg-type]
+            return [ro] + [float(a) for a in alts], "RO/AO"  # type: ignore[arg-type]
 
     dp4 = cell.get("DP4") or info.get("DP4", "")
     if dp4:
         parts = [_num(p) for p in dp4.split(",")]
         if len(parts) == 4 and all(p is not None for p in parts):
-            return parts[0] + parts[1], parts[2] + parts[3], "DP4"  # type: ignore[operator]
+            return [parts[0] + parts[1], parts[2] + parts[3]], "DP4"  # type: ignore[operator]
 
-    return None, None, None
+    return None, None
 
 
 def _pl_list(cell: dict[str, str]) -> list[int] | None:
@@ -170,11 +177,22 @@ def evaluate_genotype(
     is_het = len(set(alleles)) > 1
     is_hom_alt = not is_het and alleles[0] != "0"
 
-    dp = _num(cell.get("DP")) or _num(info.get("DP"))
+    # INFO/DP is the depth summed over every sample at the site.  Using it as a
+    # per-sample depth in a multi-sample VCF multiplies each sample's apparent
+    # depth by the cohort size, which turns shallow homozygotes into
+    # "adequate depth" ones - the precise failure this check exists to catch.
+    # It is only a legitimate proxy when there is exactly one sample.
+    dp = _num(cell.get("DP"))
+    if dp is None and single_sample:
+        dp = _num(info.get("DP"))
     gq = _num(cell.get("GQ"))
-    ref_n, alt_n, ad_source = _allele_counts(cell, info)
-    total = (ref_n + alt_n) if (ref_n is not None and alt_n is not None) else None
-    ab = (alt_n / total) if (total and total > 0) else None
+    counts, ad_source = _allele_counts(cell, info if single_sample else {})
+    idx = [int(a) for a in alleles]
+    have_counts = counts is not None and all(i < len(counts) for i in idx)
+    # Balance is computed against the allele that was actually called, so a
+    # multiallelic hom-alt backed by a minority of reads cannot read as clean.
+    total = sum(counts) if have_counts else None  # type: ignore[arg-type]
+    ab = (counts[idx[0]] / total) if (have_counts and total) else None  # type: ignore[index]
     pl = _pl_list(cell)
     ev |= {
         "DP": dp,
@@ -192,13 +210,22 @@ def evaluate_genotype(
     if gq is not None and gq < cfg.min_gq:
         flags.append("LOW_GQ")
 
-    if is_het and total and total >= cfg.low_depth and alt_n is not None:
-        p = binom_two_sided_p(int(alt_n), int(total))
+    if is_het and have_counts and total and total >= cfg.low_depth:
+        # Only the two called alleles enter the test; reads supporting a third
+        # allele are evidence about the site, not about this genotype's balance.
+        a, b = counts[idx[0]], counts[idx[1]]  # type: ignore[index]
+        pair = a + b
+        p = binom_two_sided_p(int(b), int(pair)) if pair >= cfg.low_depth else 1.0
         ev["allele_balance_p"] = p
         if p < cfg.ab_alpha:
             flags.append("AB_SKEW")
 
     if is_hom_alt:
+        # Silence is not evidence of adequacy.  A homozygous call with neither a
+        # depth nor a likelihood to examine has not been checked, and must not be
+        # tallied alongside the ones that passed a check.
+        if dp is None and not _pl_list(cell) and ab is None:
+            flags.append("HOM_NOT_ASSESSABLE")
         pl_het = None
         if pl and len(pl) >= 2:
             pl_het = pl[1]
@@ -288,7 +315,7 @@ def check_genotype(
     # number in this check means.
     filter_seen = {"absent": 0, "pass": 0, "nonpass": 0}
     # Homozygotes deep enough that depth is not the explanation.
-    deep_hom = {"n": 0, "flagged": 0}
+    deep_hom = {"n": 0, "flagged": 0, "depth_unknown": 0}
     # MLEAC redundancy measurement
     overlap = {"mleac_flagged": 0, "mleac_also_caught_by_rules": 0, "mleac_also_caught_by_qc": 0}
     # clustering state, per sample
@@ -337,7 +364,12 @@ def check_genotype(
                     tally.n_het += 1
                 elif is_hom_alt:
                     tally.n_hom_alt += 1
-                    if (ev.get("DP") or 0) >= cfg.low_depth:
+                    if ev.get("DP") is None:
+                        # Depth unknown: this homozygote is neither adequate nor
+                        # inadequate, and counting it either way is a claim the
+                        # data does not support.
+                        deep_hom["depth_unknown"] += 1
+                    elif ev["DP"] >= cfg.low_depth:
                         deep_hom["n"] += 1
                         if "FALSE_HOM_SUSPECT" in flags:
                             deep_hom["flagged"] += 1
@@ -442,6 +474,28 @@ def check_genotype(
                         "confirm every candidate homozygote by an orthogonal method "
                         "before building a recessive model on it"
                     ],
+                },
+            )
+        )
+
+    unassessable = sum(t.flags.get("HOM_NOT_ASSESSABLE", 0) for t in tallies.values())
+    total_hom = sum(t.n_hom_alt for t in tallies.values())
+    if unassessable and total_hom and unassessable / total_hom > 0.01:
+        findings.append(
+            Finding(
+                code="HOM_NOT_ASSESSABLE",
+                severity=Severity.ERROR,
+                message=(
+                    f"{unassessable} of {total_hom} homozygous-alternate calls "
+                    f"({unassessable / total_hom:.0%}) carry neither a depth, a "
+                    f"likelihood nor an allele count, so this check could not "
+                    f"examine them at all - their absence from the flagged list "
+                    f"is not evidence that they are sound"
+                ),
+                evidence={
+                    "n_hom_not_assessable": unassessable,
+                    "n_hom_alt": total_hom,
+                    "needed": "FORMAT DP, or PL/GL, or AD / RO+AO / DP4",
                 },
             )
         )
