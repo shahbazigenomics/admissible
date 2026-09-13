@@ -30,6 +30,7 @@ from .checks.callability import CallabilityConfig, load_coverage
 from .checks.models import ModelConfig
 from .model import Report, Status
 from .ped import read_ped
+from .pedtable import looks_like_ped_table, read_ped_table
 from .report import render_json, render_text
 from .vcfio import load_cohort
 
@@ -99,11 +100,74 @@ def build_parser() -> argparse.ArgumentParser:
         need_vcf=False,
     )
     common(sub.add_parser("models", help="check 5 only: inheritance model sweep"))
+
+    # Writing a PED by hand is where most first runs go wrong: the ids have to
+    # match the sample names inside the VCFs exactly, and nobody can see those
+    # without looking. This prints the skeleton with them already filled in.
+    tpl = sub.add_parser(
+        "ped-template",
+        help="print a PED skeleton with the sample names from your VCFs filled in",
+    )
+    tpl.add_argument("vcf", nargs="+", type=Path)
+    tpl.add_argument(
+        "--csv", action="store_true",
+        help="write a headered CSV to fill in in a spreadsheet, instead of a PED",
+    )
     return p
+
+
+def read_pedigree(path: Path):
+    """A PED, or the spreadsheet the pedigree is actually kept in."""
+    return read_ped_table(path) if looks_like_ped_table(path) else read_ped(path)
+
+
+def _ped_template(paths: list[Path], as_csv: bool) -> int:
+    from .vcfio import SiteIndex, scan_vcf
+
+    names: list[str] = []
+    for path in paths:
+        if not path.exists():
+            print(f"admissible: no such file: {path}", file=sys.stderr)
+            return 2
+        scan = scan_vcf(path, SiteIndex())
+        for sample in scan.header.samples:
+            if sample not in names:
+                names.append(sample)
+    if not names:
+        print("admissible: no sample names found in those files", file=sys.stderr)
+        return 2
+
+    if as_csv:
+        sys.stdout.write("sample,father,mother,sex,affected\n")
+        for n in names:
+            sys.stdout.write(f"{n},,,,\n")
+        sys.stderr.write(
+            f"# {len(names)} sample(s). Fill in: father/mother = the sample id of "
+            f"that parent, blank if not sequenced; sex = M or F; "
+            f"affected = yes or no.\n"
+        )
+        return 0
+
+    sys.stdout.write("#FID\tIID\tPAT\tMAT\tSEX\tPHENO\n")
+    for n in names:
+        sys.stdout.write(f"FAM1\t{n}\t0\t0\t0\t0\n")
+    sys.stderr.write(
+        f"# {len(names)} sample(s) written with their VCF names, which is the part "
+        f"that has to match.\n"
+        f"# Now fill in, per row: FID (one per family), PAT/MAT (the IID of that "
+        f"parent, 0 if not sequenced),\n"
+        f"#   SEX 1=male 2=female 0=unknown, PHENO 1=unaffected 2=affected "
+        f"0=unknown.\n"
+        f"# Add a row for an unsequenced parent too - it is what lets kinship be "
+        f"computed through them.\n"
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "ped-template":
+        return _ped_template(list(args.vcf), args.csv)
 
     missing = [str(p) for p in args.vcf if not Path(p).exists()]
     if missing:
@@ -114,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     # Every file read, not every file that happened to contain a sample: a
     # sites-only VCF has no samples and is precisely what check 3 must report on.
     scans = list(matrix.files) if matrix else []
-    ped = read_ped(args.ped) if getattr(args, "ped", None) else None
+    ped = read_pedigree(args.ped) if getattr(args, "ped", None) else None
 
     family = args.family
     if family is None and ped is not None and ped.families:
