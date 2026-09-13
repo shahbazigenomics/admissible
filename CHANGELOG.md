@@ -22,7 +22,11 @@ First release. All five checks implemented.
   were never variant-quality filtered.
 - **Check 3 — content provenance.** `CODING_ONLY`, `PASS_FILTERED`, `SUBSET` and
   `METRICS_STRIPPED` verdicts, from annotation already present in the input.
-- **Check 4 — callability.** Joint callable fraction as a true interval intersection,
+- **Check 4 — callability.** Depth bins are selected by their own lower bound, so
+  any `--quantize` binning works and none of them can silently fall back to
+  counting shallow bases as callable; a binning with no boundary at the depth
+  floor reports UNKNOWN, and one whose bin straddles the floor is excluded and
+  declared a lower bound. Joint callable fraction as a true interval intersection,
   per inheritance model, from `mosdepth --quantize` output. Prints the product of the
   per-sample fractions alongside it to show how far that common shortcut is wrong.
 - **Check 5 — inheritance model sweep.** Nine models with per-model callable
