@@ -120,3 +120,22 @@ def test_min_depth_is_settable_from_the_command_line(tmp_path, capsys):
     assert "0.80 of target searched" in capsys.readouterr().out
     main(base + ["--min-depth", "30"])
     assert "0.40 of target searched" in capsys.readouterr().out
+
+
+def test_identity_runs_without_a_pedigree(cohort, capsys):
+    """Duplicate detection and sex inference need no pedigree at all.
+
+    An unpedigreed cohort is exactly when "are any two of these the same
+    person" matters most, and check 1 previously crashed on ``ped=None`` after
+    doing all of the pairwise work - on a 2,504-sample public VCF, after six
+    minutes.
+    """
+    code = main(["identity", *[str(p) for p in cohort["vcfs"]], "-v"])
+    out = capsys.readouterr().out
+    assert code in (0, 1)
+    # Nothing is claimed about a pedigree that was never supplied.
+    assert "SAMPLE_NOT_IN_PED" not in out
+    assert "pedigree broadly consistent" not in out
+    assert "no pedigree supplied" in out
+    # The planted duplicates are still found without any pedigree.
+    assert "DUPLICATE" in out
