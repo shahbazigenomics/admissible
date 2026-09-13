@@ -431,7 +431,7 @@ def _calibrate_relatedness(
 @never_raises(CHECK)
 def check_identity(
     matrix: GenotypeMatrix,
-    ped: Pedigree,
+    ped: Pedigree | None = None,
     cfg: IdentityConfig | None = None,
     build: str | None = None,
 ) -> CheckResult:
@@ -467,9 +467,20 @@ def check_identity(
     pairs = pair_evidence(matrix, sets)
 
     # --- sample / pedigree membership -------------------------------------
+    # Sex inference and duplicate detection need no pedigree at all, and an
+    # unpedigreed cohort is exactly when you most want to ask "are any two of
+    # these the same person". An empty pedigree simply skips reconciliation.
+    have_ped = ped is not None and bool(ped.individuals)
+    ped = ped if ped is not None else Pedigree()
+    if not have_ped:
+        notes.append(
+            "no pedigree supplied, so nothing here is reconciled against declared "
+            "relationships: sex, duplicates and observed relatedness are reported "
+            "on their own terms"
+        )
     in_ped = set(ped.sample_ids)
     in_vcf = set(matrix.samples)
-    if missing := sorted(in_vcf - in_ped):
+    if have_ped and (missing := sorted(in_vcf - in_ped)):
         findings.append(
             Finding(
                 code="SAMPLE_NOT_IN_PED",
@@ -728,7 +739,11 @@ def check_identity(
         summary = ", ".join(parts) or "samples do not match the pedigree"
     elif any(f.severity in (Severity.WARN, Severity.ERROR) for f in findings):
         status = Status.WARN
-        summary = "pedigree broadly consistent, with caveats"
+        summary = (
+            "pedigree broadly consistent, with caveats"
+            if have_ped
+            else "no pedigree to reconcile against; see findings"
+        )
     elif boundary is None and not dense_pairs:
         status = Status.UNKNOWN
         summary = "could not calibrate a relatedness boundary on this cohort"
