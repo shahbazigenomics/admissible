@@ -1,0 +1,226 @@
+# admissible
+
+**Audit whether exome data can support an interpretation — before you interpret it.**
+
+`admissible` does not tell you whether a variant is pathogenic. It tells you whether
+your evidence is admissible: whether the samples are who the pedigree says they are,
+whether the file you were given is the file you think you were given, and whether you
+actually searched enough of the exome to be allowed to report a negative.
+
+```
+$ admissible audit family/*.vcf --ped family.ped
+
+COHORT FAM_B                                        VERDICT: NOT INTERPRETABLE
+
+Identity .......... FAIL     2 duplicate pair(s), 2 sex mismatch(es)
+Provenance ........ WARN     CODING_ONLY + PASS_FILTERED + SUBSET
+Callable .......... UNKNOWN  no coverage supplied; a VCF cannot answer this
+Genotype QC ....... WARN     318 of 2104 homozygous calls unsupported (15%)
+Models ............ WARN     0 candidates under 4 models; not rarity-filtered
+
+DO NOT CONCLUDE: "no monogenic cause"
+
+NEXT STEPS: 1. resolve sample identity (blocking)
+            2. re-call without the coding-only interval file
+```
+
+---
+
+## Why this exists
+
+A candidate variant held up for a year turned out to be a false homozygous call
+supported by two reads. Chasing that led to a second discovery: two exomes filed
+under one family belonged to different people. Chasing *that* led to a third: the
+VCFs had been pre-filtered to coding-only and PASS-only before delivery, so only a
+fraction of the exome was ever searchable in the first place.
+
+None of the tools in that pipeline — a commercial interpretation platform, a
+standard annotator, a by-the-book GATK workflow — raised any of it. They all answer
+the same question: *is this variant pathogenic?* None of them answers the question
+that had to be answered first: *can I trust this data, and did I actually search
+enough?*
+
+That gap is this tool.
+
+## What it does
+
+**Input:** a family's VCFs + a PED file (+ optionally mosdepth coverage summaries)
+**Output:** a one-page verdict, in human-readable text and machine-readable JSON
+
+It never interprets a variant. It audits the evidence base that an interpretation
+would rest on, across five checks:
+
+| # | Check | Question | 0.1.0 |
+|---|-------|----------|-------|
+| 1 | Identity | Is each sample who the pedigree says it is? | implemented |
+| 2 | Genotype | Which genotypes are not supported by their own evidence? | implemented |
+| 3 | Provenance | Is this file actually a whole exome? | implemented |
+| 4 | Callability | How much of the target did you really search? | implemented |
+| 5 | Models | What does the inheritance-model count profile look like? | implemented |
+
+`UNKNOWN` in a report therefore always means *your inputs cannot answer this*, never
+*this is not written yet*. Callability reports `UNKNOWN` given only VCFs, because a
+VCF genuinely cannot answer it; the two-locus model reports `not-applicable` because
+the pairwise search needs an explicit multiple-testing treatment first.
+
+## Install
+
+```bash
+pip install admissible          # once published
+pip install -e ".[dev]"         # from a clone
+```
+
+Zero required runtime dependencies, Python 3.10+.
+
+## Design decisions worth arguing with
+
+These are the choices most likely to be wrong. They are stated here so they can be
+challenged rather than discovered.
+
+**Duplicate detection is cohort-wide, never within-family.** A within-family scan
+cannot find a swap that lives *between* two families, which is the failure mode that
+motivated the tool.
+
+**Two relatedness engines, and the input decides which applies.** Jaccard and
+genotype agreement over non-reference sites always work, but they are depth- and
+pipeline-dependent — so the boundary is calibrated on your own cohort rather than
+hard-coded, using medians and MAD so that a minority of mislabelled pairs cannot
+drag it. They can separate related from unrelated; they cannot resolve degree.
+
+Where samples were *jointly* genotyped, the tool switches to **KING-robust kinship
+and IBS0**. Both are allele-frequency-free, so they need no external database, and
+both are far more robust to depth. IBS0 also separates parent–offspring from full
+sibs, a distinction site-set overlap cannot make at all — though see the public
+validation below for how far that holds. On the bundled joint fixture Jaccard puts
+parent–offspring at 0.570 and full sibs at 0.592 while IBS0 puts them at 0.000 and
+0.025; on real data, where genotype error puts a floor under parent–offspring IBS0,
+the separation is clear on average but the two distributions overlap at the edges.
+
+The catch is that this only works within one multi-sample or joint-called VCF. In
+separate single-sample VCFs, "hom-reference" and "never callable here" are the same
+absence of a line, and IBS0 depends on telling them apart. So with single-sample
+VCFs the tool reports degree as unresolved instead of guessing.
+
+**Sex is called from chrX heterozygosity with PAR and XTR excluded, reported as an
+interval.** chrY call counts are shown as context and take no part in the call:
+females routinely carry a handful of chrY calls from X–Y homologous mismapping, so
+single-digit counts carry no evidential weight. Consanguinity and long runs of
+homozygosity depress female chrX heterozygosity, so the boundary is calibrated on
+the cohort's own bimodality where one exists, and borderline samples are returned
+as *not determined* rather than forced into a call.
+
+**Duplicate pairs are reported by evidence, not by cause.** The tool states what is
+observable — byte identity, site-set identity, call-count ratio, shared-site
+agreement — and lists the mechanisms compatible with it. It will not assert that a
+duplicate came from the wet lab rather than from file handling: re-running one FASTQ
+through a different pipeline version produces the same observation as preparing a
+second library.
+
+**No bundled annotation database.** The tool reads only your own files. Region
+classes come from annotation already present in your VCF; nothing is fetched and
+nothing is shipped. Where a check genuinely needs a population allele frequency, it
+takes a user-supplied source and reports `UNKNOWN` without one, rather than quietly
+substituting a worse definition of "rare".
+
+**A count is never reported without its denominator.** Zero candidates over 20% of
+the target and zero over 95% are not the same finding, and printing them identically
+is how "no monogenic cause" gets written down. Every model in the sweep carries its
+own callable fraction, and a model the inputs cannot support reports
+`not-applicable` rather than zero — because zero looks like evidence of absence.
+
+**Nothing raises.** A tool whose purpose is to describe broken files must not die on
+one. Truncated downloads, double-gzipped files, sites-only VCFs, headerless VCFs and
+files that are not VCFs at all all produce a typed failure with a stated reason. The
+test suite fuzzes for this.
+
+## Running the checks separately
+
+```bash
+admissible identity   family/*.vcf --ped family.ped -v
+admissible provenance family/*.vcf
+admissible audit      family/*.vcf --ped family.ped --json report.json
+```
+
+Exit codes: `0` nothing blocking, `1` a check failed or raised a blocking finding,
+`2` the inputs could not answer the question.
+
+## Test fixtures
+
+All fixtures are **synthetic**. No patient data is in this repository, and none ever
+will be. The generators rebuild them deterministically:
+
+```bash
+python tests/fixtures/make_fixtures.py       # 13 samples, 3 families, two planted swaps
+python tests/fixtures/make_joint_family.py   # one jointly called family, real transmission
+pytest
+```
+
+The cohort fixture plants, and the test suite asserts recovery of: a pair of samples
+in different families that are the same individual (Jaccard 1.0000, agreement 1.0000,
+files of identical byte length differing at exactly one byte); a second cross-family
+pair that is one individual sequenced twice at different depth (Jaccard 0.7508,
+agreement 0.9726); two male samples sitting in pedigree slots declared female; and a
+coding-only, PASS-only, subset call set. Declared-unrelated pairs sit at Jaccard
+0.34–0.37 and true first-degree pairs at 0.48–0.52 — a deliberately thin margin,
+because that thinness is the argument for calibrating the boundary instead of
+hard-coding it.
+
+## Validation on public data
+
+Synthetic fixtures written by the author of the code are weak evidence, so
+check 1 is also validated against **CEPH pedigree 1463** — the Utah
+three-generation family, as distributed with
+[peddy](https://github.com/brentp/peddy): a real joint-called VCF (17 samples,
+freebayes, `GL` rather than `PL`, no `##contig` headers), a real published
+pedigree, and a deliberately corrupted copy of that pedigree that peddy ships as
+its own canonical failure case.
+
+| property | result |
+|---|---|
+| sex calls vs the published pedigree | 16 called, **0 wrong**; 1 returned *undetermined* at the boundary rather than guessed |
+| truly unrelated pairs called related | **0 of 11** |
+| first-degree pairs recognised as related | **all**, minimum φ 0.153 |
+| false duplicate pairs across 136 comparisons | **0** |
+| the correct pedigree | accepted, no findings |
+| peddy's corrupted pedigree (father/daughter swapped) | caught, both swapped samples named |
+
+Two things this exposed that the synthetic fixtures could not, both now
+reflected in the code:
+
+**Band-label comparison is brittle.** True full sibs in this family come out at
+φ 0.153 and 0.176, just under the 0.177 first-degree boundary — realised IBD
+genuinely varies between sibs. An earlier version compared band *labels* and
+reported both as pedigree errors. Reconciliation now compares the observed
+kinship to the kinship the pedigree *implies*, computed recursively, and flags
+only discrepancies too large to be noise. It deliberately says nothing about
+first-vs-second degree.
+
+**Second-degree relatedness is not reliable per pair at this site count.**
+Grandparent–grandchild pairs average the textbook 0.125, but the weakest falls
+below the unrelated band floor. The tool reports the informative-site count and
+says so, rather than implying a precision it does not have.
+
+Reproduce with `git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy`
+then `pytest tests/test_public_ceph.py` (the tests skip if the data is absent).
+
+## Related tools
+
+`admissible` is not a replacement for any of these, and where they apply you should
+prefer them:
+
+- [somalier](https://github.com/brentp/somalier) — identity, relatedness, sex
+- [peddy](https://github.com/brentp/peddy) — the same, VCF-native
+- [slivar](https://github.com/brentp/slivar) — inheritance models, in-house AF
+- [NGSCheckMate](https://github.com/parklab/NGSCheckMate) — identity at the FASTQ stage
+- [mosdepth](https://github.com/brentp/mosdepth) — coverage summaries
+
+One caveat drove a design decision here. somalier and peddy score against a fixed
+panel of common genome-wide sites, largely intronic and intergenic. A coding-only,
+PASS-only call set overlaps almost none of them — so on exactly the data class this
+tool exists to detect, they have little to work with. The native genotype engine is
+therefore the primary path here, not a fallback, and adapters for these tools will
+report their overlapping-site count and decline to run below a floor.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

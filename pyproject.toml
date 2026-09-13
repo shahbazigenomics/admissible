@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "admissible"
+version = "0.1.0"
+description = "Audit whether exome data can support an interpretation, before you interpret it."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Amir Shahbazi" }]
+keywords = [
+    "genomics", "exome", "wes", "vcf", "quality-control",
+    "sample-identity", "relatedness", "pedigree", "rare-disease",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# Deliberately zero required runtime dependencies. See README, "Why no cyvcf2".
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.5"]
+
+[project.scripts]
+admissible = "admissible.cli:main"
+adm = "admissible.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shahbazigenomics/admissible"
+Issues = "https://github.com/shahbazigenomics/admissible/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/admissible"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

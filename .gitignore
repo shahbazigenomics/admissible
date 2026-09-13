@@ -1,0 +1,8 @@
+tests/fixtures/cohort/
+tests/fixtures/joint/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/

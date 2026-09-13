@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: "admissible: auditing whether exome data can support an interpretation"
+message: "If you use this software, please cite it."
+type: software
+authors:
+  - family-names: Shahbazi
+    given-names: Amir
+repository-code: "https://github.com/shahbazigenomics/admissible"
+license: MIT
+version: 0.1.0
+date-released: "2026-09-12"
+keywords:
+  - exome sequencing
+  - sample identity
+  - quality control
+  - rare disease
+  - pedigree
+abstract: >-
+  A command-line tool that audits the evidence base for a genomic interpretation
+  rather than the interpretation itself: sample identity and pedigree
+  consistency, genotype confidence, call-set provenance, callable fraction, and
+  the inheritance-model count profile. It reads only the user's own files and
+  bundles no annotation database.
