@@ -76,6 +76,12 @@ First release. All five checks implemented.
 
 ### Known limitations
 
+- Two samples homozygous for *different* alternate alleles at the same
+  multiallelic site are not counted as IBS0, because the genotype encoding keeps
+  only hom-ref / het / hom-alt. On CEPH 1463 this affects 0 pairs across 31
+  multiallelic sites, which is why it is recorded rather than fixed; a call set
+  rich in multiallelics would need a per-allele encoding.
+
 - The two-locus model is not implemented: the pairwise search needs an explicit
   multiple-testing treatment before any count is reportable.
 - Relationship degree beyond *related vs unrelated* is not adjudicated at typical
