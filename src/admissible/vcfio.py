@@ -409,7 +409,14 @@ def _consume_record(
     if gt_idx is None:
         return True
 
-    key: SiteKey = (chrom, pos, ref.upper(), ",".join(alts).upper())
+    # ``<NON_REF>`` is gVCF bookkeeping - the symbolic "any other allele" - not an
+    # observed alternate.  Leaving it in the site key gives the same variant two
+    # different identities depending on whether it arrived in a gVCF or a plain
+    # VCF, so a gVCF and a VCF of the SAME person share no sites at all and the
+    # pair is reported unrelated.  Failing towards "unrelated" is the one
+    # direction an identity check must never fail in.
+    real_alts = [a for a in alts if a.upper() != "<NON_REF>"] or alts
+    key: SiteKey = (chrom, pos, ref.upper(), ",".join(real_alts).upper())
     site_id = index.id_for(key)
     if gene_value:
         scan.site_gene[site_id] = gene_value
