@@ -15,7 +15,10 @@ First release. All five checks implemented.
   Relatedness by KING-robust kinship and IBS0 where samples were jointly genotyped, and
   by Jaccard/agreement with a cohort-calibrated boundary otherwise. Pedigree
   reconciliation against recursively computed expected kinship.
-- **Check 2 — genotype confidence.** False-homozygote detection separating
+- **Check 2 — genotype confidence.** Allele depths read from `AD`, freebayes
+  `RO`/`AO` or `DP4`, whichever the caller wrote, with the field used recorded in
+  the evidence; VarScan's single-valued `AD` is deliberately not read as GATK's.
+  False-homozygote detection separating
   `LOW_DEPTH_HOM`, `HOM_CONTRADICTED_BY_LIKELIHOOD` and `ALLELE_IMBALANCE_HOM`. Allele
   balance by exact binomial test rather than a fixed window. Site-level quality flags,
   segmental-duplication and clustered-variant flags, and detection of call sets that
@@ -29,7 +32,11 @@ First release. All five checks implemented.
   declared a lower bound. Joint callable fraction as a true interval intersection,
   per inheritance model, from `mosdepth --quantize` output. Prints the product of the
   per-sample fractions alongside it to show how far that common shortcut is wrong.
-- **Check 5 — inheritance model sweep.** Nine models with per-model callable
+- **Check 5 — inheritance model sweep.** Gene assignment from ANNOVAR keys, VEP
+  `CSQ` or SnpEff `ANN` (the pipe-delimited layout is read from the header rather
+  than assumed), so compound-heterozygous is evaluable on ordinarily annotated
+  VCFs. A de-novo count carries a caveat stating that an unfiltered count at
+  exome scale is dominated by genotyping error. Nine models with per-model callable
   fractions; models the inputs cannot support report `not-applicable`, never zero.
 - ANNOVAR `*_multianno.txt` reader, for analyses whose VCFs no longer exist.
 - Text and JSON reports (schema `admissible/report/1`), per-check CLI subcommands,
@@ -37,10 +44,11 @@ First release. All five checks implemented.
 
 ### Validated against
 
-- Public CEPH pedigree 1463 (17 samples, three generations, freebayes, GRCh37):
-  0 sex errors, 0 false duplicates across 136 pairs, the correct pedigree accepted
-  and a deliberately corrupted copy of it caught. Reproducible by anyone — see the
-  validation section of the README.
+- Public CEPH pedigree 1463 (17 samples, three generations, freebayes + VEP,
+  GRCh37). Check 1: 0 sex errors, 0 false duplicates across 136 pairs, the correct
+  pedigree accepted and a deliberately corrupted copy of it caught. Checks 2 and 5
+  run on the same file, which is what exposed the `RO`/`AO` and `CSQ` gaps above.
+  Reproducible by anyone — see the validation section of the README.
 - Synthetic fixtures with planted sample swaps, regenerated deterministically by
   scripts in `tests/fixtures/`.
 
