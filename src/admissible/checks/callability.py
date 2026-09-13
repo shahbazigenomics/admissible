@@ -30,7 +30,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from ..intervals import IntervalSet, coverage_at_least, intersect, read_bed, total_bp
+from ..intervals import (
+    IntervalSet,
+    coverage_at_least,
+    intersect,
+    merge,
+    read_bed,
+    total_bp,
+)
 from ..model import CheckResult, Finding, Severity, Status, never_raises, unknown
 from ..ped import Pedigree
 
@@ -46,7 +53,11 @@ CLAIM_LADDER = [
 
 @dataclass
 class CallabilityConfig:
-    depth_label: str = "10:inf"  # the mosdepth --quantize bin to keep
+    # Depth at or above which a position counts as callable.  Bins are selected
+    # by their own lower bound, not by matching one hard-coded label, because
+    # `--quantize 0:10:` is only the most common of many binnings a user may
+    # have run.
+    min_depth: int = 10
     strong: float = 0.80
     weak: float = 0.50
     # Models whose denominator is "every affected sample", vs the phenocopy
@@ -69,6 +80,29 @@ class SampleCoverage:
     path: str
     intervals: IntervalSet = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
+    # How the depth bins in the file were treated, so the report can say it.
+    bins_kept: list[str] = field(default_factory=list)
+    bins_straddling: list[str] = field(default_factory=list)
+    bins_dropped: list[str] = field(default_factory=list)
+    unlabelled: bool = False
+
+
+def _bin_bounds(label: str) -> tuple[float, float] | None:
+    """Parse a mosdepth quantize label such as ``10:inf`` or ``0:5``.
+
+    Returns ``None`` for anything that is not a depth bin, which is how a
+    plain callable-region BED with a name in column 4 is told apart from a
+    quantize output.
+    """
+    lo_s, _, hi_s = label.partition(":")
+    if not _:
+        return None
+    try:
+        lo = float(lo_s)
+        hi = float("inf") if hi_s in ("inf", "") else float(hi_s)
+    except ValueError:
+        return None
+    return lo, hi
 
 
 def load_coverage(
@@ -83,14 +117,49 @@ def load_coverage(
     out: list[SampleCoverage] = []
     for label, path in spec.items():
         bed = read_bed(path)
-        # A quantize file carries a depth-bin label in column 4; a plain callable
-        # BED does not.  Re-read with the filter only if the labels are present.
-        relabelled = read_bed(path, keep_label=cfg.depth_label)
-        chosen = relabelled if relabelled.total_bp else bed
+        problems = list(bed.problems)
+        depth_bins = {k: _bin_bounds(k) for k in bed.labels}
+        depth_bins = {k: v for k, v in depth_bins.items() if v is not None}
+
+        if not depth_bins:
+            # A plain callable-region BED: every interval in it is callable by
+            # construction, and there is nothing to select.
+            out.append(
+                SampleCoverage(
+                    label=label, path=str(path), intervals=bed.intervals,
+                    problems=problems, unlabelled=True,
+                )
+            )
+            continue
+
+        kept, straddling, dropped = [], [], []
+        for name, (lo, hi) in sorted(depth_bins.items(), key=lambda kv: kv[1]):
+            if lo >= cfg.min_depth:
+                kept.append(name)
+            elif hi > cfg.min_depth:
+                # The bin spans the threshold, so it cannot be resolved without
+                # re-running mosdepth.  Excluding it understates callability,
+                # which is the safe direction; the check says so.
+                straddling.append(name)
+            else:
+                dropped.append(name)
+
+        merged: IntervalSet = {}
+        for name in kept:
+            part = read_bed(path, keep_label=name)
+            for contig, ivs in part.intervals.items():
+                merged.setdefault(contig, []).extend(ivs)
+        merged = {c: merge(v) for c, v in merged.items()}
+
+        if not kept:
+            problems.append(
+                f"no depth bin at or above {cfg.min_depth}x: file has "
+                f"{', '.join(sorted(depth_bins))}"
+            )
         out.append(
             SampleCoverage(
-                label=label, path=str(path), intervals=chosen.intervals,
-                problems=list(bed.problems),
+                label=label, path=str(path), intervals=merged, problems=problems,
+                bins_kept=kept, bins_straddling=straddling, bins_dropped=dropped,
             )
         )
     return out
@@ -130,6 +199,31 @@ def check_callability(
             coverage_labels=[c.label for c in coverage],
             affected=sorted(affected),
         )
+    # An affected sample with no coverage file silently shrinks the intersection
+    # to the samples that do have one, which *raises* the reported fraction: the
+    # number then answers a smaller question than the one being asked.
+    missing_cov = sorted(affected - {c.label for c in coverage}) if affected else []
+    unmatched = (
+        sorted({c.label for c in coverage} - set(ped.sample_ids if ped else []))
+        if affected
+        else []
+    )
+
+    # A file whose depth bins never reach the threshold carries no evidence of
+    # callability at all.  Answering from it would be the exact error this check
+    # exists to prevent, so refuse rather than report a fraction.
+    empty = [c for c in usable if not c.unlabelled and not c.bins_kept]
+    if empty:
+        return unknown(
+            CHECK,
+            f"no depth bin at or above {cfg.min_depth}x in "
+            f"{', '.join(c.label for c in empty)}; re-run mosdepth with a "
+            f"--quantize boundary at {cfg.min_depth}, e.g. "
+            f"--quantize 0:{cfg.min_depth}:",
+            bins_present={c.label: sorted(c.bins_dropped + c.bins_straddling)
+                          for c in empty},
+        )
+
     if not affected:
         notes_affected = (
             "no pedigree supplied, so every sample with coverage was treated as "
@@ -193,6 +287,52 @@ def check_callability(
     notes += target_problems
     for c in usable:
         notes += [f"{c.label}: {p}" for p in c.problems]
+    if missing_cov:
+        findings.append(
+            Finding(
+                code="AFFECTED_WITHOUT_COVERAGE",
+                severity=Severity.ERROR,
+                message=(
+                    f"{len(missing_cov)} affected sample(s) have no coverage file, so "
+                    f"the fraction below is the intersection over {n} samples, not "
+                    f"over the {len(affected)} the models actually require - it "
+                    f"overstates what was searched"
+                ),
+                evidence={
+                    "affected_without_coverage": missing_cov,
+                    "affected_total": len(affected),
+                    "samples_intersected": n,
+                },
+            )
+        )
+    if unmatched:
+        findings.append(
+            Finding(
+                code="COVERAGE_LABEL_UNKNOWN",
+                severity=Severity.WARN,
+                message=(
+                    f"coverage supplied under label(s) {', '.join(unmatched)}, which "
+                    f"name nobody in the pedigree; those files were ignored"
+                ),
+                evidence={"unmatched_labels": unmatched,
+                          "pedigree_samples": sorted(ped.sample_ids) if ped else []},
+            )
+        )
+
+    for c in usable:
+        if c.unlabelled:
+            notes.append(
+                f"{c.label}: the BED carries no depth bins, so every interval in "
+                f"it was taken as callable on trust; admissible cannot verify a "
+                f"{cfg.min_depth}x floor from it"
+            )
+        elif c.bins_straddling:
+            notes.append(
+                f"{c.label}: bin(s) {', '.join(c.bins_straddling)} span "
+                f"{cfg.min_depth}x and were excluded, so this sample's callable "
+                f"fraction is a lower bound; re-quantize with a boundary at "
+                f"{cfg.min_depth} to resolve it"
+            )
     notes.append(
         f"the {cfg.strong:.2f}/{cfg.weak:.2f} claim thresholds are conventions, not "
         f"derived quantities; they are configurable and should be stated as "
@@ -283,6 +423,10 @@ def check_callability(
         if joint_frac < cfg.strong
         else Status.PASS
     )
+    # A fraction computed over fewer samples than the models require is not a
+    # PASS whatever its value, because it is not the number it claims to be.
+    if missing_cov and status is Status.PASS:
+        status = Status.WARN
     return CheckResult(
         check=CHECK,
         status=status,
