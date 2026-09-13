@@ -219,12 +219,26 @@ writes `ANN`, both pipe-delimited with the layout declared in the header rather
 than fixed. Reading only flat keys made compound-heterozygous report
 *not-applicable* on most annotated VCFs, CEPH included; it now computes.
 
+**A file with no samples is still a file.** The cohort loader keyed every scan
+by sample name, so a sites-only VCF — no FORMAT column, no genotypes — vanished
+before reaching check 3, and the CLI answered *"no VCFs were supplied"* about a
+file it had just read. A sites-only export is the clearest possible case of
+`METRICS_STRIPPED`, so the one case the verdict exists for was the one case it
+could never report.
+
 A third thing this exposed is not a bug but a reporting duty. Three declared-
 affected siblings in CEPH yield 29 apparent de novo variants over ~20,000 sites.
 At a germline rate near 1.3 × 10⁻⁸ per base per generation a whole exome expects
 well under one true de novo per proband, so essentially all 29 are genotyping
 error. The count is what the segregation filter finds and is not wrong — but
 printed bare it reads as a mutation count, so it now travels with that caveat.
+
+Check 3 is validated differently, because provenance has no ground truth in a
+file that was never tampered with: one known transformation at a time is applied
+to the real CEPH file — a coding-only extract, a PASS-only delivery, a merge that
+rewrites `0/0` as `./.`, a sites-only export — and the tool must name that
+transformation and no other. It does, and the unmodified file is called a subset
+and nothing else.
 
 Reproduce with `git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy`
 then `pytest tests/test_public_ceph.py` (the tests skip if the data is absent).

@@ -23,8 +23,12 @@ First release. All five checks implemented.
   balance by exact binomial test rather than a fixed window. Site-level quality flags,
   segmental-duplication and clustered-variant flags, and detection of call sets that
   were never variant-quality filtered.
-- **Check 3 — content provenance.** `CODING_ONLY`, `PASS_FILTERED`, `SUBSET` and
-  `METRICS_STRIPPED` verdicts, from annotation already present in the input.
+- **Check 3 — content provenance.** `CODING_ONLY`, `PASS_FILTERED`, `SUBSET`,
+  `METRICS_STRIPPED`, `HOMREF_STRIPPED` and `NOT_INTERVAL_RESTRICTED` verdicts,
+  from annotation already present in the input. Region class is read from
+  ANNOVAR keys or from VEP/SnpEff consequence terms, so the coding-only question
+  is answerable on ordinarily annotated VCFs. A sites-only VCF reaches the check
+  rather than disappearing for having no samples.
 - **Check 4 — callability.** Depth bins are selected by their own lower bound, so
   any `--quantize` binning works and none of them can silently fall back to
   counting shallow bases as callable; a binning with no boundary at the depth
@@ -48,7 +52,11 @@ First release. All five checks implemented.
   GRCh37). Check 1: 0 sex errors, 0 false duplicates across 136 pairs, the correct
   pedigree accepted and a deliberately corrupted copy of it caught. Checks 2 and 5
   run on the same file, which is what exposed the `RO`/`AO` and `CSQ` gaps above.
-  Reproducible by anyone — see the validation section of the README.
+  Check 3 is validated by applying one known transformation at a time to that
+  same real file — coding-only extract, PASS-only delivery, a merge that drops
+  hom-reference, a sites-only export — and requiring the tool to name that
+  transformation and no other. Reproducible by anyone — see the validation
+  section of the README.
 - Real capture coverage: four unrelated 1000 Genomes exomes over
   chr20:1,400,000–1,500,000, with the denominator taken independently from an
   Ensembl GTF rather than from the coverage. Per-sample callable fractions
