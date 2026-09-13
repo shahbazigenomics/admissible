@@ -225,3 +225,133 @@ def test_the_de_novo_count_on_real_data_is_qualified(tmp_path):
     entry = next(e for e in res.metrics["profile"] if e["model"] == "de-novo")
     assert entry["n_candidates"] > 0
     assert "dominated by genotyping error" in entry["caveat"]
+
+
+# --- check 3 on real data --------------------------------------------------
+#
+# Provenance was the last check resting entirely on fixtures.  The design here
+# is one known transformation at a time applied to a real file: take CEPH, do
+# to it exactly what a delivering lab does, and require the tool to name that
+# and nothing else.  It found two defects.
+
+
+def _csq_consequence_index(header_lines):
+    line = next(h for h in header_lines if h.startswith("##INFO=<ID=CSQ"))
+    cols = line.split("Format:")[1].split('">')[0].strip().split("|")
+    return [i for i, c in enumerate(cols) if c.strip() == "Consequence"][0]
+
+
+@pytest.fixture(scope="module")
+def ceph_lines():
+    import gzip
+
+    hdr, rows = [], []
+    with gzip.open(VCF, "rt") as fh:
+        for line in fh:
+            (hdr if line.startswith("#") else rows).append(line)
+    return hdr, rows
+
+
+def _verdicts(path):
+    from admissible.checks.provenance import check_provenance
+    from admissible.vcfio import SiteIndex, scan_vcf
+
+    verdicts = check_provenance([scan_vcf(path, SiteIndex())]).metrics["verdicts"]
+    # A file's verdicts are reported joined, e.g. "CODING_ONLY+SUBSET".
+    return {part for v in verdicts for part in v.split("+")}
+
+
+def test_the_real_file_is_called_a_subset_and_nothing_else(ceph_lines):
+    """peddy ships ~20k selected sites. That is a subset, and only a subset."""
+    assert _verdicts(str(VCF)) == {"SUBSET"}
+
+
+def test_vep_annotation_answers_the_coding_only_question(ceph_lines):
+    """Region class was read from ANNOVAR keys only, so a fully VEP-annotated
+    file reported the coding-only question as UNKNOWN. It is now answerable."""
+    from admissible.checks.provenance import check_provenance
+    from admissible.vcfio import SiteIndex, scan_vcf
+
+    res = check_provenance([scan_vcf(str(VCF), SiteIndex())])
+    f = res.metrics["files"][0]
+    assert f["annotation_source"] == "VEP/SnpEff:CSQ"
+    assert f["coding_fraction"] == pytest.approx(0.605, abs=0.01)
+    assert f["intronic_fraction"] == pytest.approx(0.307, abs=0.01)
+    # 60% coding is not a coding-only extract, and must not be called one.
+    assert "CODING_ONLY" not in res.metrics["verdicts"]
+
+
+def test_a_coding_only_extract_of_it_is_caught(ceph_lines, tmp_path):
+    hdr, rows = ceph_lines
+    ci = _csq_consequence_index(hdr)
+    coding_terms = {
+        "missense_variant", "synonymous_variant", "stop_gained", "stop_lost",
+        "start_lost", "frameshift_variant", "splice_acceptor_variant",
+        "splice_donor_variant", "splice_region_variant",
+    }
+
+    def is_coding(line):
+        info = line.split("\t")[7]
+        for kv in info.split(";"):
+            if kv.startswith("CSQ="):
+                terms = set()
+                for block in kv[4:].split(","):
+                    parts = block.split("|")
+                    if ci < len(parts):
+                        terms |= {t for t in parts[ci].split("&") if t}
+                return bool(terms & coding_terms)
+        return False
+
+    p = tmp_path / "coding_only.vcf"
+    p.write_text("".join(hdr + [r for r in rows if is_coding(r)]))
+    assert "CODING_ONLY" in _verdicts(str(p))
+
+
+def test_a_pass_only_delivery_of_it_is_caught(ceph_lines, tmp_path):
+    hdr, rows = ceph_lines
+    out = []
+    for r in rows:
+        f = r.rstrip("\n").split("\t")
+        f[6] = "PASS"
+        out.append("\t".join(f) + "\n")
+    p = tmp_path / "pass_only.vcf"
+    p.write_text("".join(hdr + out))
+    assert "PASS_FILTERED" in _verdicts(str(p))
+
+
+def test_a_merge_that_drops_hom_reference_is_caught(ceph_lines, tmp_path):
+    """Exactly what produced the Italian merged VCFs: 0/0 rewritten to ./.."""
+    hdr, rows = ceph_lines
+    out = []
+    for r in rows:
+        f = r.rstrip("\n").split("\t")
+        cells = []
+        for cell in f[9:]:
+            sub = cell.split(":")
+            if sub[0] in ("0/0", "0|0"):
+                sub[0] = "./."
+            cells.append(":".join(sub))
+        out.append("\t".join(f[:9] + cells) + "\n")
+    p = tmp_path / "homref_stripped.vcf"
+    p.write_text("".join(hdr + out))
+    assert "HOMREF_STRIPPED" in _verdicts(str(p))
+
+
+def test_a_sites_only_vcf_reaches_check_3_at_all(ceph_lines, tmp_path):
+    """The cohort loader keyed every file by sample, so a file with no samples
+    vanished before reaching check 3 - and the CLI answered "no VCFs were
+    supplied" about a file it had just read. A sites-only VCF is the single
+    clearest case of METRICS_STRIPPED, so it was the one case that could never
+    be reported."""
+    from admissible.cli import main
+
+    hdr, rows = ceph_lines
+    chrom_line = "\t".join(hdr[-1].rstrip("\n").split("\t")[:8]) + "\n"
+    p = tmp_path / "sites_only.vcf"
+    p.write_text(
+        "".join([h for h in hdr if not h.startswith("#CHROM")])
+        + chrom_line
+        + "".join("\t".join(r.rstrip("\n").split("\t")[:8]) + "\n" for r in rows)
+    )
+    assert "METRICS_STRIPPED" in _verdicts(str(p))
+    assert main(["provenance", str(p)]) in (0, 1)
