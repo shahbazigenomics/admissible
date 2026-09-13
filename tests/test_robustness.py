@@ -105,3 +105,39 @@ def test_random_byte_soup_never_raises(tmp_path):
         path = tmp_path / f"soup{i}.vcf"
         path.write_bytes(blob)
         scan_vcf(path, SiteIndex())
+
+
+def test_a_gvcf_and_a_vcf_of_the_same_variant_are_the_same_site(tmp_path):
+    """``<NON_REF>`` must not become part of a variant's identity.
+
+    GATK writes every gVCF ALT as ``G,<NON_REF>``; a plain VCF writes ``G``.
+    Carrying the symbolic allele into the site key gave one variant two
+    identities, so a gVCF and a VCF *of the same person* shared no sites at all
+    and the pair came out unrelated. Measured on a real GATK gVCF and its own
+    call set before the fix: 0 shared sites out of 65 that should have matched.
+
+    Failing towards "unrelated" is the one direction an identity check must
+    never fail in - it turns a duplicate into two strangers.
+    """
+    head = (
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+    )
+    gvcf = tmp_path / "a.g.vcf"
+    gvcf.write_text(
+        head
+        + "chr1\t100\t.\tG\t<NON_REF>\t.\t.\tEND=150\tGT:DP\t0/0:30\n"
+        + "chr1\t200\t.\tC\tT,<NON_REF>\t50\t.\tDP=30\tGT:DP\t0/1:30\n"
+    )
+    vcf = tmp_path / "b.vcf"
+    vcf.write_text(head + "chr1\t200\t.\tC\tT\t50\tPASS\tDP=30\tGT:DP\t0/1:30\n")
+
+    index = SiteIndex()
+    g = scan_vcf(gvcf, index)
+    v = scan_vcf(vcf, index)
+    # The reference block is counted, never indexed as a variant site.
+    assert g.stats.n_reference_blocks == 1
+    assert g.stats.n_records == 1
+    assert len(index) == 1, index.keys          # one variant, one identity
+    assert index.keys[0] == ("1", 200, "C", "T")
+    assert set(g.genotypes["S1"]) == set(v.genotypes["S1"])
