@@ -265,6 +265,24 @@ causal variant cannot be excluded* — which is what the tool reports.
 noise. It demonstrates the effect on real capture; it does not estimate its size
 in general.
 
+### The ANNOVAR reader
+
+A delivered analysis is often nothing but annotated tables, so the adapter that
+reads them matters. Run against real GATK genotypes wrapped in ANNOVAR's
+documented `--vcfinput` layout, it reconstructed 113 of 120 genotypes correctly
+and got 7 wrong — **every multiallelic `1/2` call became a homozygous
+alternate**, because `AC=1,1` sums to two. A heterozygote read as a homozygote
+is the one failure this tool exists to prevent, and the reader was committing it
+before any check got to look.
+
+The cause was the same one that ran through checks 2, 3 and 5: reading a derived
+proxy while the real field sat unread. `--vcfinput` keeps the original FORMAT and
+sample columns; the genotype is now read from them, which is 120 of 120, and
+`DP`, `GQ`, `PL` and `AD` come with it — so check 2 can examine an
+ANNOVAR-delivered analysis using likelihoods and allele balance instead of
+falling back to `MLEAC`. Tables produced without `--vcfinput` have no FORMAT
+block at all, and there the `AC`/`AN` reconstruction is still the only option.
+
 ## What this tool cannot see
 
 Callability here is depth-based, which makes it blind to structural variation. A

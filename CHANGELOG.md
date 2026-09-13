@@ -43,6 +43,10 @@ First release. All five checks implemented.
   exome scale is dominated by genotyping error. Nine models with per-model callable
   fractions; models the inputs cannot support report `not-applicable`, never zero.
 - ANNOVAR `*_multianno.txt` reader, for analyses whose VCFs no longer exist.
+  Where `table_annovar.pl --vcfinput` preserved the original FORMAT and sample
+  columns, the genotype is read from them and `DP`/`GQ`/`PL`/`AD` are available
+  to check 2; the `AC`/`AN` reconstruction remains the fallback for tables that
+  genuinely carry no FORMAT block.
 - Text and JSON reports (schema `admissible/report/1`), per-check CLI subcommands,
   pipeline exit codes.
 
@@ -64,6 +68,9 @@ First release. All five checks implemented.
   per-sample fractions 0.2232 — the shortcut is 41% low on real capture. 4,134 bp
   is a small measurement and carries real sampling noise; see
   `tests/data/1000g_exome_chr20/PROVENANCE.md`.
+- Real GATK genotypes inside a reconstructed ANNOVAR column layout, which is
+  what caught the multiallelic reconstruction error above. See
+  `tests/data/annovar/PROVENANCE.md` for which half of that fixture is real.
 - Synthetic fixtures with planted sample swaps, regenerated deterministically by
   scripts in `tests/fixtures/`.
 
