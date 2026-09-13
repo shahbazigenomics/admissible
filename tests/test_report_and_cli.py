@@ -139,3 +139,32 @@ def test_identity_runs_without_a_pedigree(cohort, capsys):
     assert "no pedigree supplied" in out
     # The planted duplicates are still found without any pedigree.
     assert "DUPLICATE" in out
+
+
+def test_the_header_names_only_the_families_actually_supplied(tmp_path, capsys):
+    """A whole-cohort PED reused for one family's run must not make the report
+    claim the other families were looked at.
+
+    Found by running the tool the way a first-time user would: three samples of
+    one family, plus the cohort PED that was already on disk. The header read
+    "3 families: FAM_A,FAM_B,FAM_C" for a run that saw only FAM_A - an overclaim
+    on the headline line of a report whose whole purpose is to stop overclaims.
+    """
+    head = (
+        "##fileformat=VCFv4.2\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA1\n"
+    )
+    vcf = tmp_path / "a.vcf"
+    vcf.write_text(head + "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:DP:GQ\t0/1:30:99\n")
+    ped = tmp_path / "cohort.ped"
+    ped.write_text(
+        "FAM_A\tA1\t0\t0\t1\t2\n"
+        "FAM_B\tB1\t0\t0\t1\t2\n"
+        "FAM_C\tC1\t0\t0\t2\t1\n"
+    )
+
+    main(["identity", str(vcf), "--ped", str(ped)])
+    out = capsys.readouterr().out
+    assert "FAM_A" in out
+    assert "FAM_B" not in out and "FAM_C" not in out
+    assert "3 families" not in out
