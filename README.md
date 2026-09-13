@@ -66,9 +66,12 @@ the pairwise search needs an explicit multiple-testing treatment first.
 ## Install
 
 ```bash
-pip install admissible          # once published
-pip install -e ".[dev]"         # from a clone
+git clone https://github.com/shahbazigenomics/admissible
+cd admissible && pip install -e ".[dev]"
 ```
+
+Not on PyPI yet, so there is deliberately no `pip install admissible` line here
+to fail on.
 
 Zero required runtime dependencies, Python 3.10+.
 
@@ -168,7 +171,7 @@ hard-coding it.
 ## Validation on public data
 
 Synthetic fixtures written by the author of the code are weak evidence, so
-check 1 is also validated against **CEPH pedigree 1463** — the Utah
+checks 1, 2 and 5 are also run against **CEPH pedigree 1463** — the Utah
 three-generation family, as distributed with
 [peddy](https://github.com/brentp/peddy): a real joint-called VCF (17 samples,
 freebayes, `GL` rather than `PL`, no `##contig` headers), a real published
@@ -200,8 +203,44 @@ Grandparent–grandchild pairs average the textbook 0.125, but the weakest falls
 below the unrelated band floor. The tool reports the informative-site count and
 says so, rather than implying a precision it does not have.
 
+Running checks 2 and 5 on the same file found two defects that the synthetic
+fixtures could not, because a fixture written alongside the code inherits the
+code's assumptions about what a VCF looks like:
+
+**Allele depth is not always spelled `AD`.** freebayes writes `RO`/`AO`, older
+samtools pipelines write `DP4`. Reading only `AD` left the entire allele-balance
+arm of check 2 silently inert on freebayes output — no `AB_SKEW`, no
+`ALLELE_IMBALANCE_HOM` — while the report still looked complete. On CEPH those
+two now fire 2,598 and 63 times respectively, and allele balance finds 20
+false-homozygote candidates that the likelihood arm alone does not.
+
+**Gene assignment is not always an ANNOVAR key.** VEP writes `CSQ` and SnpEff
+writes `ANN`, both pipe-delimited with the layout declared in the header rather
+than fixed. Reading only flat keys made compound-heterozygous report
+*not-applicable* on most annotated VCFs, CEPH included; it now computes.
+
+A third thing this exposed is not a bug but a reporting duty. Three declared-
+affected siblings in CEPH yield 29 apparent de novo variants over ~20,000 sites.
+At a germline rate near 1.3 × 10⁻⁸ per base per generation a whole exome expects
+well under one true de novo per proband, so essentially all 29 are genotyping
+error. The count is what the segregation filter finds and is not wrong — but
+printed bare it reads as a mutation count, so it now travels with that caveat.
+
 Reproduce with `git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy`
 then `pytest tests/test_public_ceph.py` (the tests skip if the data is absent).
+
+## What this tool cannot see
+
+Callability here is depth-based, which makes it blind to structural variation. A
+heterozygous deletion leaves depth comfortably above any sensible floor, so the
+region reads as callable; the surviving allele is then called homozygous with a
+genuinely clean allele balance, so check 2 does not flag it either. Both checks
+pass and the genotype is still wrong. Where a CNV is a plausible mechanism —
+`IL10RA`/`IL10RB` in early-onset IBD, for one — a read-depth or split-read CNV
+caller answers a question this tool does not ask.
+
+The target BED is also taken on trust. Supply the wrong capture kit and every
+fraction in check 4 is wrong; only a gross mismatch trips `NOT_INTERVAL_RESTRICTED`.
 
 ## Related tools
 
