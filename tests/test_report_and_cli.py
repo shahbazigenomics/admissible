@@ -100,3 +100,23 @@ def test_callability_runs_without_any_vcf(tmp_path, capsys):
     assert main(args) == 0
     out = capsys.readouterr().out
     assert "0.80 of target searched" in out
+
+
+def test_min_depth_is_settable_from_the_command_line(tmp_path, capsys):
+    """The depth floor is a clinical choice, so it must not be compiled in."""
+    ped = tmp_path / "f.ped"
+    ped.write_text(
+        "#FID\tIID\tPAT\tMAT\tSEX\tPHENO\n"
+        "F\tDAD\t0\t0\t1\t1\nF\tMUM\t0\t0\t2\t1\nF\tKID1\tDAD\tMUM\t1\t2\n"
+    )
+    target = tmp_path / "target.bed"
+    target.write_text("chr1\t0\t1000\n")
+    q = tmp_path / "KID1.quantized.bed"
+    q.write_text("chr1\t0\t200\t0:10\nchr1\t200\t600\t10:30\nchr1\t600\t1000\t30:inf\n")
+    base = ["callability", "--ped", str(ped), "--target", str(target),
+            "--coverage", f"KID1={q}"]
+
+    main(base)
+    assert "0.80 of target searched" in capsys.readouterr().out
+    main(base + ["--min-depth", "30"])
+    assert "0.40 of target searched" in capsys.readouterr().out
