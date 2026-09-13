@@ -42,7 +42,14 @@ First release. All five checks implemented.
 
 ### Known limitations
 
-- Check 4 has not yet been run on real BAM-derived coverage.
+- Check 4 has been exercised end-to-end on genuine `mosdepth --quantize 0:10:`
+  output, but the BAMs behind that output were simulated. Simulated coverage can
+  confirm that the quantize format is read correctly and that the intersection
+  arithmetic is right; it cannot establish how far the product understates the
+  joint fraction on a real capture, because that gap is set by the real
+  correlation structure of probe efficiency. Treat the printed product-vs-
+  intersection gap as demonstrated in principle and unmeasured in practice until
+  it has been run on a real exome.
 - The two-locus model is not implemented: the pairwise search needs an explicit
   multiple-testing treatment before any count is reportable.
 - Relationship degree beyond *related vs unrelated* is not adjudicated at typical
