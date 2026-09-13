@@ -240,3 +240,104 @@ def test_interval_restricted_calling_is_not_flagged(tmp_path):
     )
     res = check_provenance([scan_vcf(vcf, SiteIndex())], target_bed=str(target))
     assert not [x for x in res.findings if x.code == "NOT_INTERVAL_RESTRICTED"]
+
+
+# --- depth-bin selection --------------------------------------------------
+#
+# `--quantize 0:10:` is only the most common binning.  Selecting the bin by a
+# hard-coded "10:inf" label meant that any other binning matched nothing and
+# fell back to the whole file - counting zero-depth bases as callable and
+# licensing "monogenic cause excluded" on data with no coverage at all.  That
+# is the precise error this check exists to prevent, so it is tested three ways.
+
+
+def write_quantized(path, rows):
+    with open(path, "w") as fh:
+        for chrom, start, end, label in rows:
+            fh.write(f"{chrom}\t{start}\t{end}\t{label}\n")
+    return path
+
+
+def test_a_non_default_binning_does_not_count_shallow_bases(tmp_path, ped):
+    """--quantize 0:5:20: has no 10x boundary; only 20:inf may be counted."""
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {}
+    for s in ("KID1", "KID2", "KID3"):
+        spec[s] = write_quantized(
+            tmp_path / f"{s}.bed",
+            [("chr1", 0, 400, "0:5"), ("chr1", 400, 700, "5:20"),
+             ("chr1", 700, 1000, "20:inf")],
+        )
+    res = check_callability(load_coverage(spec), ped, target_bed=target)
+    # 0.30, not 1.00: the 0:5 bin is not callable and 5:20 cannot be resolved.
+    assert res.metrics["joint_callable_fraction"] == pytest.approx(0.30)
+    assert any("span 10x and were excluded" in n for n in res.notes)
+    assert any("lower bound" in n for n in res.notes)
+
+
+def test_no_bin_reaches_the_threshold_is_unknown_not_a_fraction(tmp_path, ped):
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {
+        s: write_quantized(
+            tmp_path / f"{s}.bed",
+            [("chr1", 0, 500, "0:1"), ("chr1", 500, 1000, "1:4")],
+        )
+        for s in ("KID1", "KID2", "KID3")
+    }
+    res = check_callability(load_coverage(spec), ped, target_bed=target)
+    assert res.status is Status.UNKNOWN
+    assert "--quantize 0:10:" in res.summary
+
+
+def test_a_plain_callable_bed_is_taken_on_trust_but_said_so(tmp_path, ped):
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {
+        s: write_bed(tmp_path / f"{s}.bed", [("chr1", 0, 900)])
+        for s in ("KID1", "KID2", "KID3")
+    }
+    cov = load_coverage(spec)
+    assert all(c.unlabelled for c in cov)
+    res = check_callability(cov, ped, target_bed=target)
+    assert res.metrics["joint_callable_fraction"] == pytest.approx(0.90)
+    assert any("on trust" in n for n in res.notes)
+
+
+def test_higher_bins_are_all_kept(tmp_path, ped):
+    """0:10:30: has two callable bins; both count, not just the first match."""
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {
+        s: write_quantized(
+            tmp_path / f"{s}.bed",
+            [("chr1", 0, 200, "0:10"), ("chr1", 200, 600, "10:30"),
+             ("chr1", 600, 1000, "30:inf")],
+        )
+        for s in ("KID1", "KID2", "KID3")
+    }
+    res = check_callability(load_coverage(spec), ped, target_bed=target)
+    assert res.metrics["joint_callable_fraction"] == pytest.approx(0.80)
+
+
+def test_an_affected_sample_without_coverage_is_not_a_pass(tmp_path, ped):
+    """Dropping a sample silently *raises* the fraction - the opposite of safe."""
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {
+        s: write_bed(tmp_path / f"{s}.bed", [("chr1", 0, 950)])
+        for s in ("KID1", "KID2")          # KID3 is affected but has no file
+    }
+    res = check_callability(load_coverage(spec), ped, target_bed=target)
+    assert res.metrics["joint_callable_fraction"] == pytest.approx(0.95)
+    f = next(x for x in res.findings if x.code == "AFFECTED_WITHOUT_COVERAGE")
+    assert f.evidence["affected_without_coverage"] == ["KID3"]
+    assert f.evidence["affected_total"] == 3
+    assert res.status is Status.WARN     # not PASS, despite 0.95
+
+
+def test_a_coverage_label_naming_nobody_is_reported(tmp_path, ped):
+    target = write_bed(tmp_path / "target.bed", [("chr1", 0, 1000)])
+    spec = {
+        s: write_bed(tmp_path / f"{s}.bed", [("chr1", 0, 950)])
+        for s in ("KID1", "KID2", "KID3", "KID_3")   # a typo, not a sample
+    }
+    res = check_callability(load_coverage(spec), ped, target_bed=target)
+    f = next(x for x in res.findings if x.code == "COVERAGE_LABEL_UNKNOWN")
+    assert f.evidence["unmatched_labels"] == ["KID_3"]
