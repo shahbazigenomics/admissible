@@ -1,5 +1,7 @@
 # admissible
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22738502.svg)](https://doi.org/10.5281/zenodo.22738502)
+
 **Audit whether exome data can support an interpretation — before you interpret it.**
 
 `admissible` does not tell you whether a variant is pathogenic. It tells you whether
@@ -355,6 +357,17 @@ PASS-only call set overlaps almost none of them — so on exactly the data class
 tool exists to detect, they have little to work with. The native genotype engine is
 therefore the primary path here, not a fallback, and adapters for these tools will
 report their overlapping-site count and decline to run below a floor.
+
+## Citing
+
+Every release is archived on Zenodo. The DOI below always resolves to the latest
+version; the release page carries a version-specific DOI if you need to cite the
+exact code you ran.
+
+> Shahbazi, A. *admissible: auditing whether exome data can support an
+> interpretation.* https://doi.org/10.5281/zenodo.22738502
+
+Machine-readable metadata is in [CITATION.cff](CITATION.cff).
 
 ## Licence
 
