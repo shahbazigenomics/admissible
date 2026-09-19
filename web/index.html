@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>admissible — audit exome data before you interpret it</title>
+<meta name="description" content="admissible audits whether exome data can support an interpretation: sample identity, file provenance, callability and genotype support — before you interpret a single variant.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+    <div class="wrap">
+        <div class="brand">
+            <span class="dollar">$</span>
+            <span class="name">admissible</span>
+            <span class="ver">v0.1.0</span>
+        </div>
+        <nav class="links">
+            <a class="hide-sm" href="#checks">Checks</a>
+            <a class="hide-sm" href="#install">Install</a>
+            <a class="hide-sm" href="#validation">Validation</a>
+            <a href="https://github.com/shahbazigenomics/admissible">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main>
+<section class="plain hero">
+    <div class="wrap">
+        <div class="eyebrow">Exome evidence audit</div>
+        <h1>Audit whether exome data can support an interpretation
+            <span class="soft">— before you interpret it.</span></h1>
+        <p class="lede"><strong>admissible</strong> does not tell you whether a
+            variant is pathogenic. It tells you whether your evidence is
+            admissible: whether the samples are who the pedigree says they are,
+            whether the file is the file you think it is, and whether you searched
+            enough of the exome to be allowed to report a negative.</p>
+
+        <div class="cta">
+            <span class="copy">
+                <span class="prompt">$</span>
+                <span id="cmd" class="mono">pipx install admissible</span>
+                <button id="copy" aria-label="Copy install command">copy</button>
+            </span>
+            <a class="btn primary" href="#install">Get started</a>
+            <a class="btn" href="https://github.com/shahbazigenomics/admissible">View source</a>
+        </div>
+
+        <div class="badges">
+            <span class="badge"><span class="dot pass"></span>153 tests passing</span>
+            <span class="badge"><span class="dot accent"></span>Python 3.10 – 3.14</span>
+            <span class="badge">zero runtime dependencies</span>
+            <span class="badge">MIT licensed</span>
+            <span class="badge"><a href="https://doi.org/10.5281/zenodo.22738502">DOI 10.5281/zenodo.22738502</a></span>
+        </div>
+
+        <div class="terminal" aria-label="Example admissible audit output">
+            <div class="term-bar">
+                <span class="tdot r"></span><span class="tdot y"></span><span class="tdot g"></span>
+                <span class="title">admissible audit family/*.vcf --ped family.ped</span>
+            </div>
+<pre class="term"><span class="c-prompt">$</span> <span class="c-cmd">admissible audit family/*.vcf --ped family.ped</span>
+
+<span class="c-head">COHORT FAM_B                                        VERDICT: </span><span class="c-verdict">NOT INTERPRETABLE</span>
+
+Identity .......... <span class="c-fail">FAIL</span>     2 duplicate pair(s), 2 sex mismatch(es)
+Provenance ........ <span class="c-warn">WARN</span>     CODING_ONLY + PASS_FILTERED + SUBSET
+Callable .......... <span class="c-unknown">UNKNOWN</span>  no coverage supplied; a VCF cannot answer this
+Genotype QC ....... <span class="c-warn">WARN</span>     318 of 2104 homozygous calls unsupported (15%)
+Models ............ <span class="c-warn">WARN</span>     0 candidates under 4 models; not rarity-filtered
+
+<span class="c-verdict">DO NOT CONCLUDE:</span> "no monogenic cause"
+
+<span class="c-dim">NEXT STEPS: 1. resolve sample identity (blocking)
+            2. re-call without the coding-only interval file</span></pre>
+        </div>
+    </div>
+</section>
+
+<section id="why">
+    <div class="wrap">
+        <h2>Why this exists</h2>
+        <p class="section-lede">A candidate variant held up for a year turned out
+            to be a false homozygous call supported by two reads. Chasing it
+            surfaced two more failures nobody's pipeline had raised: two exomes
+            filed under one family belonged to different people, and the VCFs had
+            been pre-filtered to coding-only, PASS-only before delivery — so only
+            a fraction of the exome was ever searchable.</p>
+        <p class="section-lede">Interpretation platforms, annotators and by-the-book
+            workflows all answer the same question — <em>is this variant
+            pathogenic?</em> None answers the one that comes first: <em>can I trust
+            this data, and did I actually search enough?</em> That gap is this tool.
+            It never interprets a variant; it audits the evidence base an
+            interpretation would rest on, and where your inputs cannot answer a
+            question it reports <code>UNKNOWN</code> rather than guessing.</p>
+    </div>
+</section>
+
+<section id="checks">
+    <div class="wrap">
+        <h2>Five checks, one verdict</h2>
+        <p class="section-lede">Input is a family's VCFs and a PED file (optionally
+            mosdepth coverage). Output is a one-page verdict in human-readable text
+            and machine-readable JSON.</p>
+        <div class="checks">
+            <div class="check">
+                <div class="n">CHECK 01 · IDENTITY</div>
+                <h3>Is each sample who the pedigree says?</h3>
+                <p>Cohort-wide duplicate detection, relatedness (Jaccard, genotype
+                    agreement, or KING-robust kinship + IBS0 on joint calls) and
+                    sex from chrX heterozygosity — calibrated on your cohort, not
+                    hard-coded.</p>
+            </div>
+            <div class="check">
+                <div class="n">CHECK 02 · GENOTYPE</div>
+                <h3>Which calls aren't supported by their own evidence?</h3>
+                <p>Likelihood and allele-balance arms flag homozygous calls that
+                    the reads don't back — reading <code>AD</code>, <code>RO/AO</code>
+                    and <code>DP4</code>, not just one spelling of depth.</p>
+            </div>
+            <div class="check">
+                <div class="n">CHECK 03 · PROVENANCE</div>
+                <h3>Is this file actually a whole exome?</h3>
+                <p>Detects coding-only extracts, PASS-only deliveries, sites-only
+                    exports and merges that rewrote genotypes — naming the
+                    transformation, not just flagging that something is off.</p>
+            </div>
+            <div class="check">
+                <div class="n">CHECK 04 · CALLABILITY</div>
+                <h3>How much of the target did you really search?</h3>
+                <p>The joint callable fraction is an intersection, never a product —
+                    measured on real capture. Reports <code>UNKNOWN</code> from VCFs
+                    alone, because a VCF genuinely cannot answer it.</p>
+            </div>
+            <div class="check">
+                <div class="n">CHECK 05 · MODELS</div>
+                <h3>What does the inheritance-model profile look like?</h3>
+                <p>Every model in the sweep carries its own callable fraction. A
+                    count is never printed without its denominator — because zero
+                    over 20% and zero over 95% are not the same finding.</p>
+            </div>
+            <div class="check" style="background:linear-gradient(180deg,var(--panel-2),var(--bg-soft));">
+                <div class="n">DESIGN RULE</div>
+                <h3>Nothing raises.</h3>
+                <p>A tool whose job is to describe broken files must not die on one.
+                    Truncated, double-gzipped, headerless, or not-a-VCF-at-all — each
+                    yields a typed failure with a stated reason. The suite fuzzes for it.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="install">
+    <div class="wrap">
+        <h2>Install &amp; run</h2>
+        <p class="section-lede">The command is <code>admissible</code>, abbreviated
+            <code>adm</code>. Zero required runtime dependencies.</p>
+        <div class="two-col">
+            <div>
+                <p class="mono" style="color:var(--ink-faint);font-size:.8rem;margin:0 0 8px;">INSTALL</p>
+<pre class="code"><span class="cmt"># its own environment, nothing else touched</span>
+<span class="cmd">pipx install admissible</span>
+
+<span class="cmt"># or into the current environment</span>
+<span class="cmd">pip install admissible</span>
+
+<span class="cmt"># or with Docker — CLI and site in one image</span>
+<span class="cmd">docker run --rm admissible audit \
+    family/*.vcf --ped family.ped</span></pre>
+            </div>
+            <div>
+                <p class="mono" style="color:var(--ink-faint);font-size:.8rem;margin:0 0 8px;">AUDIT</p>
+<pre class="code"><span class="cmt"># build the pedigree from your VCFs</span>
+<span class="cmd">admissible ped-template family/*.vcf.gz \
+    &gt; family.ped</span>
+
+<span class="cmt"># the full audit, text + JSON</span>
+<span class="cmd">admissible audit family/*.vcf \
+    --ped family.ped --json report.json</span>
+
+<span class="cmt"># or one check at a time</span>
+<span class="cmd">admissible identity   family/*.vcf -v
+admissible provenance family/*.vcf</span></pre>
+            </div>
+        </div>
+        <p class="section-lede" style="margin-top:22px;">Exit codes: <code>0</code>
+            nothing blocking · <code>1</code> a check failed or raised a blocking
+            finding · <code>2</code> the inputs could not answer the question.</p>
+    </div>
+</section>
+
+<section id="validation">
+    <div class="wrap">
+        <h2>Validated on public data</h2>
+        <p class="section-lede">Synthetic fixtures written by the author of the code
+            are weak evidence, so checks run against <strong>CEPH pedigree 1463</strong>
+            (the Utah three-generation family, as distributed with peddy) and real
+            1000 Genomes capture — where they found real defects, now fixed.</p>
+        <div class="stats">
+            <div class="stat">
+                <div class="big ok">0 wrong</div>
+                <div class="lbl">16 of 17 sex calls correct; 1 returned
+                    <em>undetermined</em> at the boundary rather than guessed.</div>
+            </div>
+            <div class="stat">
+                <div class="big ok">0 / 136</div>
+                <div class="lbl">false duplicate pairs across 136 comparisons; 0 of
+                    11 truly unrelated pairs called related.</div>
+            </div>
+            <div class="stat">
+                <div class="big">0.38 ≠ 0.22</div>
+                <div class="lbl">joint callable fraction vs. the product of
+                    per-sample fractions on real capture — the product is 41% low.</div>
+            </div>
+        </div>
+        <div class="notes" style="margin-top:26px;">
+            <div class="note">
+                <div class="mark">▹</div>
+                <div>
+                    <h4>Allele depth is not always spelled <code>AD</code>.</h4>
+                    <p>freebayes writes <code>RO/AO</code>, older samtools pipelines
+                        <code>DP4</code>. Reading only <code>AD</code> left the whole
+                        allele-balance arm silently inert on freebayes output — now it
+                        fires, and finds 20 false-homozygote candidates the likelihood
+                        arm alone misses.</p>
+                </div>
+            </div>
+            <div class="note">
+                <div class="mark">▹</div>
+                <div>
+                    <h4>Gene assignment is not always an ANNOVAR key.</h4>
+                    <p>VEP writes <code>CSQ</code>, SnpEff writes <code>ANN</code>.
+                        Reading only flat keys made compound-heterozygous report
+                        <em>not-applicable</em> on most annotated VCFs, CEPH included.
+                        It now computes.</p>
+                </div>
+            </div>
+            <div class="note">
+                <div class="mark">▹</div>
+                <div>
+                    <h4>A heterozygote read as a homozygote is the one failure this
+                        tool exists to prevent.</h4>
+                    <p>The ANNOVAR reader was committing it — every multiallelic
+                        <code>1/2</code> became a homozygous alternate because
+                        <code>AC=1,1</code> sums to two. It now reads the original
+                        FORMAT columns: 120 of 120 genotypes correct.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="limits">
+    <div class="wrap">
+        <h2>What it cannot see</h2>
+        <p class="section-lede">Stated so it can be challenged rather than discovered.
+            Callability here is depth-based, so it is blind to structural variation:
+            a heterozygous deletion leaves depth above any sensible floor, the
+            surviving allele is called homozygous with clean allele balance, and both
+            checks pass while the genotype is still wrong. Where a CNV is plausible,
+            a read-depth or split-read caller answers a question this tool does not
+            ask. The target BED is taken on trust; only a gross mismatch trips
+            <code>NOT_INTERVAL_RESTRICTED</code>.</p>
+        <div class="pill-row">
+            <span class="pill">not a variant interpreter</span>
+            <span class="pill">no bundled annotation database</span>
+            <span class="pill">reads only your own files</span>
+            <span class="pill">degree unresolved on single-sample VCFs</span>
+        </div>
+    </div>
+</section>
+</main>
+
+<footer>
+    <div class="wrap">
+        <div>
+            <div class="made">admissible · auditing exome evidence</div>
+            <div style="margin-top:6px;">
+                <a href="https://github.com/shahbazigenomics/admissible">GitHub</a> ·
+                <a href="https://pypi.org/project/admissible/">PyPI</a> ·
+                <a href="https://doi.org/10.5281/zenodo.22738502">Zenodo</a> ·
+                MIT licence
+            </div>
+        </div>
+        <div class="made">hosted on genoprism.com</div>
+    </div>
+</footer>
+
+<script>
+    (function () {
+        var btn = document.getElementById('copy');
+        var cmd = document.getElementById('cmd');
+        if (!btn || !cmd || !navigator.clipboard) return;
+        btn.addEventListener('click', function () {
+            navigator.clipboard.writeText(cmd.textContent.trim()).then(function () {
+                var prev = btn.textContent;
+                btn.textContent = 'copied';
+                setTimeout(function () { btn.textContent = prev; }, 1400);
+            });
+        });
+    })();
+</script>
+</body>
+</html>

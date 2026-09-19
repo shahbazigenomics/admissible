@@ -1,0 +1,17 @@
+# Keep the build context small. The image needs the package source, its
+# metadata, the website and the server — nothing else.
+.git
+.github
+.platform
+tests
+scripts
+CHANGELOG.md
+CONTRIBUTING.md
+CITATION.cff
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+dist
+build
+*.egg-info

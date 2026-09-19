@@ -1,0 +1,17 @@
+# Compose for the admissible website container.
+#
+# The edge proxy reaches this over the shared `edge` network, so no host port
+# is published — only exposed. The same image also carries the CLI; run it
+# ad hoc with:  docker compose run --rm site audit family/*.vcf --ped fam.ped
+services:
+    site:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: genoprism/admissible:latest
+        restart: unless-stopped
+        command: ["serve"]
+        environment:
+            PORT: "8000"
+        expose:
+            - "8000"
