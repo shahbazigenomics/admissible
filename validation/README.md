@@ -36,15 +36,18 @@ coding-only file, once chrX site count drops below the calibrated floor -
 while relatedness still resolves, since it draws on the full autosomal panel.
 
 The companion claim - that peddy's own sex calls degrade on the same
-coding-only file (17/17 -> 14/17) rather than declining - needs a real peddy
-install to verify, which does not build with modern setuptools in the
-environment this script was written in. The script runs peddy automatically
-if it is importable and tells you plainly if it is not, rather than asserting
-a number nobody in this repo's CI has actually reproduced. **If you have a
-working peddy install, please run this and report back what its
-`sex_check.csv` actually says** so that specific comparison can be stated as
-verified rather than reported (see the script's own output for exactly what
-that involves).
+coding-only file (17/17 -> 14/17) rather than declining - needed a real
+peddy install to verify, which does not build with modern setuptools/pip in
+the environment this script was written in (bioconda's prebuilt package
+works: `conda install -c bioconda peddy`). **Confirmed 2026-09-28** against
+a real peddy 0.4.8 run: 17/17 correct on the full VCF, 14/17 on the
+coding-only file, with `NA12881`, `NA12887` and `NA12890` - all
+pedigree-declared female - called male, and no sample wrong in the other
+direction. The script still runs peddy automatically if it is importable
+and reports honestly if it is not, so a fresh run against a different peddy
+version or a different filtered file is checked the same way rather than
+assumed to match. See `validation/results/` for the recorded
+`sex_check.csv` output this confirmation is based on.
 
 ```
 python validation/ceph_coding_only_head_to_head.py

@@ -378,6 +378,18 @@ has not been measured the same way: its shipped sites file is a release asset
 this project could not download, and its site-building script draws from a
 gnomAD *exomes* callset, suggestive of the same bias but unconfirmed.
 
+The companion claim — that peddy's own sex calls, unlike admissible's clean
+decline, actually degrade on that same coding-only file rather than erroring
+out — was flagged above as asserted-but-unverified and has since been
+confirmed against a real peddy run (v0.4.8, 2026-09-28): 17/17 correct on the
+full CEPH 1463 VCF, 14/17 on the coding-only-filtered copy, with the same
+three true females (`NA12881`, `NA12887`, `NA12890`) called male in both
+this run and the pre-correction claim, and no sample miscalled in the other
+direction. Recorded output in `validation/results/`; reproduce with
+`validation/ceph_coding_only_head_to_head.py` and peddy installed via
+`conda install -c bioconda peddy` (its legacy build fails against modern
+setuptools, which is why pip alone won't get you there).
+
 somalier and peddy remain corroborators here, not the primary path, but for a
 narrower reason than the retracted panel claim: both need a VCF, and this
 tool's target case routinely doesn't have one — ANNOVAR tables with the VCF
