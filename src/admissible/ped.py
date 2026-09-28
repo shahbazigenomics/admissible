@@ -169,6 +169,52 @@ class Pedigree:
         return Relationship.RELATED_UNSPECIFIED
 
 
+def _find_parent_cycle(individuals: dict[str, Individual]) -> list[str] | None:
+    """Return the individuals of the first multi-node parent-child cycle found.
+
+    A direct self-parent (``ind.iid in ind.parents``) is reported separately
+    with clearer wording, so it is skipped here; this only looks for cycles of
+    two or more distinct individuals (A's father is B, B's father is A, and
+    the like), which the bounded recursion in :meth:`Pedigree._kinship` and
+    :meth:`Pedigree._depth` tolerates without crashing but silently computes a
+    plausible-looking, meaningless kinship/relationship for.
+
+    Implemented iteratively (not recursively) so an adversarially long parent
+    chain cannot raise ``RecursionError`` - a PED file is untrusted input, and
+    this function must never raise, the same contract every ``check_*`` in
+    this package already holds to.
+    """
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = dict.fromkeys(individuals, WHITE)
+
+    for start in individuals:
+        if color[start] != WHITE:
+            continue
+        color[start] = GRAY
+        path = [start]
+        stack: list[list[str]] = [list(individuals[start].parents)]
+        while stack:
+            remaining = stack[-1]
+            advanced = False
+            while remaining:
+                parent = remaining.pop(0)
+                if parent == "0" or parent == path[-1] or parent not in individuals:
+                    continue
+                if color[parent] == GRAY:
+                    i = path.index(parent)
+                    return path[i:] + [parent]
+                if color[parent] == WHITE:
+                    color[parent] = GRAY
+                    path.append(parent)
+                    stack.append(list(individuals[parent].parents))
+                    advanced = True
+                    break
+            if not advanced:
+                color[path.pop()] = BLACK
+                stack.pop()
+    return None
+
+
 def read_ped(path: str | os.PathLike[str]) -> Pedigree:
     """Parse a PED file.  Malformed lines are recorded as warnings, not raised."""
     ped = Pedigree()
@@ -198,6 +244,15 @@ def read_ped(path: str | os.PathLike[str]) -> Pedigree:
     except OSError as exc:
         ped.warnings.append(f"could not read {path}: {exc}")
         return ped
+
+    cycle = _find_parent_cycle(ped.individuals)
+    if cycle:
+        ped.warnings.append(
+            "pedigree contains a parent-child cycle ("
+            + " -> ".join(cycle)
+            + "); kinship and relationship for these individuals are computed "
+            "against a genealogically impossible structure and cannot be trusted"
+        )
 
     # A parent named in the PED but never defined is a common, silent error.
     for ind in list(ped.individuals.values()):

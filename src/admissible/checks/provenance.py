@@ -48,6 +48,23 @@ def check_provenance(
 
         return unknown(CHECK, "no VCFs were supplied")
 
+    if all(scan.stats.n_records == 0 for scan in scans):
+        from ..model import unknown
+
+        # A header-only / sites-only-with-zero-records file gives this check
+        # nothing to measure: coding fraction, PASS fraction and record count
+        # are all undefined, not zero. Without this guard every per-file
+        # `if total and ...` / `if called and ...` test below is simply
+        # falsy, no WHOLE_EXOME-disqualifying verdict ever fires, and the file
+        # can end up reported as a plain WARN (e.g. METRICS_STRIPPED) instead
+        # of UNKNOWN - which is enough to pull the whole audit's exit code out
+        # of "could not read the input" and into "no blocking problem found".
+        return unknown(
+            CHECK,
+            "no variant records in the supplied VCF(s); provenance cannot be assessed",
+            n_files=len(scans),
+        )
+
     target: IntervalSet | None = None
     if target_bed:
         target = read_bed(target_bed).intervals or None

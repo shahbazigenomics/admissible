@@ -362,12 +362,30 @@ prefer them:
 - [NGSCheckMate](https://github.com/parklab/NGSCheckMate) — identity at the FASTQ stage
 - [mosdepth](https://github.com/brentp/mosdepth) — coverage summaries
 
-One caveat drove a design decision here. somalier and peddy score against a fixed
-panel of common genome-wide sites, largely intronic and intergenic. A coding-only,
-PASS-only call set overlaps almost none of them — so on exactly the data class this
-tool exists to detect, they have little to work with. The native genotype engine is
-therefore the primary path here, not a fallback, and adapters for these tools will
-report their overlapping-site count and decline to run below a floor.
+One caveat drove a design decision here, and the caveat needed correcting: an
+earlier version of this README claimed somalier and peddy score against a panel
+"largely intronic and intergenic" that a coding-only, PASS-only call set
+"overlaps almost none of." Measured against peddy's real GRCh37 panel (23,770
+sites; reproduce with `validation/panel_overlap.py`), that's backwards: 85.4%
+of the panel falls inside RefSeq CDS and 87.0% inside a real Agilent
+SureSelect V6 capture footprint. peddy's own site-picking script explains why —
+it keeps only 1000 Genomes sites carrying the `EX_TARGET` (exome-capture-target)
+flag, so the panel is concentrated in coding-adjacent regions by construction,
+not scattered genome-wide. Combined with real GATK hard-filter survival (89.2%,
+n=120, the same script), a coding-only, PASS-only delivery still overlaps
+roughly three-quarters of the panel — not "almost none." somalier's own panel
+has not been measured the same way: its shipped sites file is a release asset
+this project could not download, and its site-building script draws from a
+gnomAD *exomes* callset, suggestive of the same bias but unconfirmed.
+
+somalier and peddy remain corroborators here, not the primary path, but for a
+narrower reason than the retracted panel claim: both need a VCF, and this
+tool's target case routinely doesn't have one — ANNOVAR tables with the VCF
+long gone are a normal delivery format it has to read (see the ANNOVAR
+adapter above). The native genotype engine works on both VCFs and
+ANNOVAR-only deliveries; peddy/somalier adapters are an additional
+corroborator when a VCF happens to still exist, not a fallback for when it
+doesn't.
 
 ## Citing
 

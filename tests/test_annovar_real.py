@@ -112,3 +112,27 @@ def test_a_table_without_vcfinput_still_falls_back_to_ac_an(tmp_path):
     assert scan.stats.format_keys_seen == set()
     codes = next(iter(scan.genotypes.values()))
     assert codes[index.get(("1", 100, "A", "G"))] == HET
+
+
+def test_ac_an_fallback_does_not_misread_a_multiallelic_heterozygote(tmp_path):
+    """AC=1,1 at a multiallelic site is 1/2 (het for two different alt alleles),
+    not a homozygote - even though the two per-allele counts sum to 2.
+
+    This is the exact bug class this reader exists to catch in other tools'
+    AC/AN-only output; it must not recur in its own fallback for a table that
+    genuinely has no FORMAT/sample block (no --vcfinput) to fall back on
+    instead, which is exactly when this path is the only thing available.
+    """
+    p = tmp_path / "multi_noformat.hg19_multianno.txt"
+    p.write_text(
+        "Chr\tStart\tEnd\tRef\tAlt\tFunc.refGene\tGene.refGene\t"
+        "Otherinfo1\tOtherinfo2\tOtherinfo3\tOtherinfo4\tOtherinfo5\t"
+        "Otherinfo6\tOtherinfo7\tOtherinfo8\n"
+        "chr1\t100\t100\tA\tG,T\texonic\tGENEX\t"
+        "chr1\t100\t.\tA\tG,T\t50\tPASS\tAC=1,1;AN=2\n"
+    )
+    index = SiteIndex()
+    scan = scan_multianno(p, index)
+    assert scan.stats.has_format_column is False
+    codes = next(iter(scan.genotypes.values()))
+    assert codes[index.get(("1", 100, "A", "G,T"))] == HET

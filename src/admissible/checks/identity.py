@@ -74,6 +74,13 @@ class IdentityConfig:
     default_sex_boundary: float = 0.45
     exclude_par: bool = True
     exclude_xtr: bool = True
+    # Cohort-wide duplicate/relatedness detection is O(n^2) in sample count,
+    # and that count comes straight off the VCF header - before a single
+    # variant is validated. A header claiming an absurd sample count (whether
+    # malicious or just corrupt) must not be allowed to hang the process; past
+    # this many samples, the pairwise scan is skipped and reported rather than
+    # run unbounded.
+    max_samples_for_pairwise: int = 2000
 
 
 @dataclass
@@ -464,7 +471,32 @@ def check_identity(
     sets = build_sets(matrix)
     sex_ev, sex_boundary, sex_notes = sex_evidence(matrix, sets, cfg, build)
     notes += sex_notes
-    pairs = pair_evidence(matrix, sets)
+    if len(matrix.samples) > cfg.max_samples_for_pairwise:
+        findings.append(
+            Finding(
+                code="COHORT_TOO_LARGE_FOR_PAIRWISE",
+                severity=Severity.WARN,
+                message=(
+                    f"{len(matrix.samples)} samples exceeds the "
+                    f"{cfg.max_samples_for_pairwise}-sample limit for cohort-wide "
+                    f"pairwise duplicate/relatedness detection (an O(n^2) scan); it "
+                    f"was skipped rather than run unbounded. Sample count is read "
+                    f"directly from the VCF header, before any variant is validated"
+                ),
+                evidence={
+                    "n_samples": len(matrix.samples),
+                    "max_samples_for_pairwise": cfg.max_samples_for_pairwise,
+                    "next_steps": [
+                        "split the cohort into smaller batches, or raise "
+                        "IdentityConfig.max_samples_for_pairwise if this cohort "
+                        "size is genuinely expected"
+                    ],
+                },
+            )
+        )
+        pairs: list[PairEvidence] = []
+    else:
+        pairs = pair_evidence(matrix, sets)
 
     # --- sample / pedigree membership -------------------------------------
     # Sex inference and duplicate detection need no pedigree at all, and an

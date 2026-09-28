@@ -274,18 +274,35 @@ def check_models(
     # compound het needs gene assignment
     genes = matrix.site_gene
 
-    def compound_het_counts() -> tuple[int, list[str]]:
+    def compound_het_counts() -> tuple[int, list[str], int]:
+        """Genes with >=2 rare, autosomal HET sites in every affected sample,
+        where no unaffected sample carries either site as HOMALT.
+
+        Subject to the same exclusion-verification rule as every other model
+        in this module (see the module docstring): an unaffected sample with
+        no genotype at a site does not satisfy "does not carry it" just
+        because ``!= HOMALT`` is trivially true for a missing value. This
+        used to be checked directly (``gt(u, site) != HOMALT``) rather than
+        through ``_exclusion_verified``, which silently treated a missing
+        unaffected genotype as a clean exclusion and inflated the count -
+        the exact failure class this module's own docstring says it exists
+        to prevent, one level down.
+        """
         by_gene: dict[str, list[int]] = {}
+        n_unverified = 0
         for site in range(n_sites):
             g = genes.get(site)
             if not g or not autosomal(site) or not rare(site):
                 continue
-            if all(gt(a, site) == HET for a in affected) and all(
-                gt(u, site) != HOMALT for u in unaffected
-            ):
+            if not all(gt(a, site) == HET for a in affected):
+                continue
+            if unaffected and not _exclusion_verified(site, unaffected):
+                n_unverified += 1
+                continue
+            if all(gt(u, site) != HOMALT for u in unaffected):
                 by_gene.setdefault(g, []).append(site)
         hits = {g: v for g, v in by_gene.items() if len(v) >= 2}
-        return len(hits), sorted(hits)[: cfg.max_examples]
+        return len(hits), sorted(hits)[: cfg.max_examples], n_unverified
 
     n_aff = len(affected)
     record("recessive", recessive, required=n_aff)
@@ -338,7 +355,7 @@ def check_models(
     )
 
     if genes:
-        n_ch, ch_examples = compound_het_counts()
+        n_ch, ch_examples, ch_unverified = compound_het_counts()
         results.append(
             ModelResult(
                 "compound-het",
@@ -346,6 +363,7 @@ def check_models(
                 n_candidates=n_ch,
                 examples=ch_examples,
                 samples_required=n_aff,
+                n_exclusion_unverified=ch_unverified,
             )
         )
     else:

@@ -13,7 +13,7 @@ import random
 
 import pytest
 
-from admissible.checks.identity import check_identity
+from admissible.checks.identity import IdentityConfig, check_identity
 from admissible.checks.provenance import check_provenance
 from admissible.model import Status
 from admissible.ped import read_ped
@@ -84,6 +84,50 @@ def test_ped_parser_never_raises(tmp_path):
 def test_missing_ped_file_is_a_warning(tmp_path):
     ped = read_ped(tmp_path / "absent.ped")
     assert ped.warnings and not ped.individuals
+
+
+def test_a_header_only_vcf_is_unknown_not_a_clean_warn(tmp_path):
+    """A VCF with a header and zero variant records gives provenance nothing
+    to measure - coding fraction, PASS fraction and record count are all
+    undefined, not zero. Before this was fixed, every ``if total and ...`` /
+    ``if called and ...`` guard was simply falsy, no disqualifying verdict
+    ever fired, and the file could come back as a plain WARN
+    (``METRICS_STRIPPED``) instead of UNKNOWN - which is enough for a
+    pipeline gating on ``admissible``'s own documented exit-code contract
+    (0 = no blocking problem found) to proceed on a file that says nothing at
+    all, the exact failure mode this tool exists to prevent.
+    """
+    p = tmp_path / "empty.vcf"
+    p.write_text(
+        "##fileformat=VCFv4.2\n##contig=<ID=1,length=249250621>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+    )
+    matrix = load_cohort([p])
+    res = check_provenance(list(matrix.scans.values()))
+    assert res.status is Status.UNKNOWN
+
+
+def test_cohort_too_large_for_pairwise_is_reported_not_hung(tmp_path):
+    """Sample count comes straight off the VCF header, before any variant is
+    validated. A header declaring an absurd number of samples must not drive
+    the O(n^2) pairwise duplicate/relatedness scan unbounded; past the
+    configured limit it should be skipped and reported, not silently run."""
+    n = 30
+    samples = [f"S{i}" for i in range(n)]
+    header = (
+        "##fileformat=VCFv4.2\n##contig=<ID=1,length=249250621>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
+        + "\t".join(samples) + "\n"
+    )
+    row = "1\t1000\t.\tA\tG\t50\tPASS\tAC=1\tGT:DP\t" + "\t".join(
+        "0/1:30" for _ in samples
+    ) + "\n"
+    p = tmp_path / "wide.vcf"
+    p.write_text(header + row)
+    matrix = load_cohort([p])
+    cfg = IdentityConfig(max_samples_for_pairwise=n - 1)
+    res = check_identity(matrix, cfg=cfg)
+    assert any(f.code == "COHORT_TOO_LARGE_FOR_PAIRWISE" for f in res.findings)
 
 
 @pytest.mark.parametrize(
