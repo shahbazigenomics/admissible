@@ -149,8 +149,16 @@ def _code_from_ac_parts(parts: list[int]) -> int:
     not recur here.
     """
     total = sum(parts)
-    if sum(1 for p in parts if p > 0) >= 2:
-        return HET
+    n_nonzero = sum(1 for p in parts if p > 0)
+    if n_nonzero >= 2:
+        # The only AN=2-consistent multiallelic het is exactly two different
+        # ALT alleles present once each (e.g. AC=1,1), which sums to 2. A
+        # combination like AC=2,1 (n_nonzero=2, total=3) is not something a
+        # single diploid sample can produce - it means the AC field itself is
+        # internally inconsistent with AN=2, not that this is some other
+        # genotype. Flag it as MISSING rather than guessing HET just because
+        # more than one entry happened to be nonzero.
+        return HET if total == 2 else MISSING
     return {0: HOMREF, 1: HET, 2: HOMALT}.get(total, MISSING)
 
 
