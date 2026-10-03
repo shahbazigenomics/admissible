@@ -63,6 +63,15 @@ class IdentityConfig:
     # has a genuinely low site-set overlap.
     dup_agreement: float = 0.95
     dup_jaccard: float = 0.60
+    # jaccard = shared / union collapses whenever the two files have very
+    # different total non-ref counts - exactly what happens comparing a
+    # native VCF to genotypes reconstructed from an ANNOVAR multianno table's
+    # AC/AN (a smaller, differently-filtered site set). When the larger side's
+    # non-ref count is at least this many times the smaller side's, a high
+    # agreement with a low jaccard is treated as "possible duplicate, verify
+    # manually" (HIGH_AGREEMENT_LOW_JACCARD) rather than silently dropped just
+    # because jaccard alone missed it.
+    dup_completeness_ratio: float = 2.0
     # Cohort calibration refuses to reconcile below this separation.
     min_band_separation: float = 2.0
     # KING-robust degree boundaries (Manichaikul et al. 2010), used to decide
@@ -466,6 +475,60 @@ def check_identity(
     notes += sex_notes
     pairs = pair_evidence(matrix, sets)
 
+    # --- mixed genotype source ----------------------------------------------
+    # A sample's genotype either comes from a native VCF's own FORMAT/SAMPLE
+    # block, or was reconstructed from a multianno table's AC/AN when no such
+    # block exists (see annovar.py). The two are not equally trustworthy:
+    # AC/AN reconstruction has no per-site depth, GQ or allele balance behind
+    # it and typically reflects a smaller, differently-filtered site set.
+    # Pooling both kinds into one sex/relatedness calibration without saying
+    # so can shift a calibrated boundary enough to flip an otherwise-correct
+    # call on a *different*, unrelated sample - observed in practice: adding
+    # AC/AN-reconstructed samples to a cohort moved the chrX-het sex boundary
+    # enough to flag two independently-confirmed-correct native-VCF samples
+    # as sex-mismatched, a result that did not appear when those same
+    # native-VCF samples were audited alone.
+    source_kind: dict[str, str] = {
+        s: ("native/format" if scan.stats.has_format_column else "reconstructed-AC/AN")
+        for s, scan in matrix.scans.items()
+    }
+    if len({source_kind.get(s) for s in matrix.samples}) > 1:
+        reconstructed = sorted(
+            s for s in matrix.samples if source_kind.get(s) == "reconstructed-AC/AN"
+        )
+        native = sorted(s for s in matrix.samples if source_kind.get(s) == "native/format")
+        findings.append(
+            Finding(
+                code="MIXED_GENOTYPE_SOURCE",
+                severity=Severity.WARN,
+                message=(
+                    f"this cohort mixes {len(native)} sample(s) with real FORMAT/SAMPLE "
+                    f"genotypes and {len(reconstructed)} sample(s) reconstructed from "
+                    f"AC/AN only ({', '.join(reconstructed)}); sex and relatedness "
+                    f"calibration below pools both without distinction, so a "
+                    f"boundary-adjacent call involving a reconstructed sample deserves "
+                    f"more caution than one between two native samples"
+                ),
+                subjects=reconstructed,
+                evidence={
+                    "native_format_samples": native,
+                    "reconstructed_ac_an_samples": reconstructed,
+                    "do_not_conclude": (
+                        "that a boundary-adjacent sex or relatedness call on a "
+                        "reconstructed-AC/AN sample is as confident as the same call "
+                        "between two native-FORMAT samples"
+                    ),
+                    "next_steps": [
+                        "treat sex/relatedness calls on the reconstructed-AC/AN samples "
+                        "as lower-confidence, especially near a calibrated boundary",
+                        "re-run with the native VCF for those samples if one is "
+                        "available, rather than relying on AC/AN reconstruction for "
+                        "identity-critical calls",
+                    ],
+                },
+            )
+        )
+
     # --- sample / pedigree membership -------------------------------------
     # Sex inference and duplicate detection need no pedigree at all, and an
     # unpedigreed cohort is exactly when you most want to ask "are any two of
@@ -577,6 +640,54 @@ def check_identity(
                             "resolve sample identity (blocking)",
                             "re-derive the affected/unaffected counts after the identity "
                             "of every sample is settled",
+                        ],
+                    },
+                )
+            )
+        elif (
+            ev.agreement >= cfg.dup_agreement
+            and ev.n_nonref_a
+            and ev.n_nonref_b
+            and max(ev.n_nonref_a, ev.n_nonref_b) / min(ev.n_nonref_a, ev.n_nonref_b)
+            >= cfg.dup_completeness_ratio
+        ):
+            # High agreement crossed the duplicate bar, but jaccard did not -
+            # and the two samples have very different total non-ref counts,
+            # the exact regime where jaccard is not a meaningful signal on its
+            # own (see dup_completeness_ratio above). Not auto-classified as a
+            # duplicate: agreement alone, even at this level, is not treated
+            # as sufficient to make a BLOCKING identity claim automatically
+            # for a public tool feeding clinical variant interpretation - a
+            # human decides. But it must not be silently dropped either, which
+            # is exactly what happened before this fix (agreement=1.000,
+            # jaccard=0.181 across a >5x non-ref-count difference produced
+            # zero findings for the whole cohort).
+            declared = ped.relationship(ev.a, ev.b)
+            findings.append(
+                Finding(
+                    code="HIGH_AGREEMENT_LOW_JACCARD",
+                    severity=Severity.WARN,
+                    message=(
+                        f"{ev.a} and {ev.b} agree on {ev.agreement:.4f} of "
+                        f"{ev.n_shared} shared sites (at or above the duplicate "
+                        f"threshold {cfg.dup_agreement}), but their site sets only "
+                        f"overlap at Jaccard {ev.jaccard:.4f} (below {cfg.dup_jaccard}) "
+                        f"with very different total non-ref counts ({ev.n_nonref_a} vs "
+                        f"{ev.n_nonref_b}) - possible duplicate with unequal call-set "
+                        f"completeness (e.g. native VCF vs AC/AN-reconstructed); not "
+                        f"classified as a duplicate automatically, verify manually"
+                    ),
+                    subjects=[ev.a, ev.b],
+                    evidence=ev.to_dict()
+                    | {
+                        "declared_relationship": declared.value,
+                        "do_not_conclude": (
+                            "that these are two independent samples just because "
+                            "jaccard alone is below the duplicate threshold"
+                        ),
+                        "next_steps": [
+                            "inspect these two samples manually before trusting any "
+                            "result that treats them as independent",
                         ],
                     },
                 )
@@ -766,7 +877,20 @@ def check_identity(
             "sex_boundary": sex_boundary,
             "relatedness_calibration": calib,
             "sex": [e.to_dict() for e in sex_ev.values()],
-            "pairs": [e.to_dict() for e in pairs],
+            "pairs": [
+                e.to_dict()
+                | {"declared_relationship": ped.relationship(e.a, e.b).value if have_ped else None}
+                for e in pairs
+            ],
+            # Thresholds the duplicate/mixed-source findings above actually
+            # used, so a report renderer (see report/text.py) can decide what
+            # counts as "close to a threshold" without hard-coding the numbers
+            # a second time.
+            "dup_thresholds": {
+                "agreement": cfg.dup_agreement,
+                "jaccard": cfg.dup_jaccard,
+            },
+            "genotype_source": source_kind,
         },
         notes=notes,
     )

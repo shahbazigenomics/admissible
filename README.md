@@ -132,6 +132,27 @@ duplicate came from the wet lab rather than from file handling: re-running one F
 through a different pipeline version produces the same observation as preparing a
 second library.
 
+**The duplicate gate is AND, not a single number, and a fired-but-not-classified pair
+is still surfaced.** A pair only becomes an automatic `DUPLICATE_*` finding when
+*both* agreement and Jaccard clear their thresholds. Jaccard alone collapses whenever
+one sample's call set is far smaller than the other's — exactly what comparing a
+native VCF to an ANNOVAR-multianno AC/AN reconstruction looks like — so a real
+duplicate with agreement 1.000 but Jaccard 0.18 used to produce nothing at all. It
+now produces `HIGH_AGREEMENT_LOW_JACCARD` (WARN, not an automatic identity claim)
+whenever agreement clears the duplicate bar and the two samples' non-ref counts
+differ by more than `dup_completeness_ratio` (default 2x), and the full pairwise
+table — not just flagged pairs — is now printed in the verbose text report, not only
+in `--json`.
+
+**A cohort that mixes native-VCF and AC/AN-reconstructed genotypes is calibrated as
+one pool, and now says so.** Reconstructed genotypes carry no per-site depth, GQ or
+allele-balance evidence and are drawn from whatever site set the annotation table
+kept, and pooling them with real FORMAT-block genotypes into one sex/relatedness
+calibration can shift the boundary enough to flip a call on an unrelated, otherwise
+correctly-called sample. `MIXED_GENOTYPE_SOURCE` (WARN) now names which samples are
+which whenever a cohort mixes both; it does not (yet) calibrate the two source types
+separately — see `design-decisions.md` for why that's a bigger, deferred decision.
+
 **No bundled annotation database.** The tool reads only your own files. Region
 classes come from annotation already present in your VCF; nothing is fetched and
 nothing is shipped. Where a check genuinely needs a population allele frequency, it
