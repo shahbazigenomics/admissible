@@ -178,3 +178,21 @@ def test_the_ped_reader_flags_it_too(tmp_path):
 
     p = write(tmp_path, "self.ped", "F\tA\tA\t0\t1\t2\n")
     assert any("own parent" in w for w in read_ped(p).warnings)
+
+
+def test_a_multi_node_pedigree_cycle_is_flagged(tmp_path):
+    """A is B's father and B is A's father: not a self-parent (the check above),
+    but exactly as genealogically impossible, and the recursive kinship/depth
+    walk would silently return a plausible-looking value for it if nothing
+    caught the loop first."""
+    from admissible.ped import read_ped
+
+    p = write(
+        tmp_path, "cycle.ped",
+        "F\tA\tB\t0\t1\t1\n"
+        "F\tB\tA\t0\t1\t1\n",
+    )
+    ped = read_ped(p)
+    assert any("cycle" in w for w in ped.warnings)
+    # Bounded, not crashing, and not silently trusted downstream either.
+    assert ped.kinship("A", "B") is not None

@@ -119,14 +119,47 @@ def _looks_like_genotype(cell: str) -> bool:
     return all(p == "." or p.isdigit() for p in parts) and bool(parts)
 
 
-def _ac_total(ac: str) -> int | None:
-    total = 0
+def _ac_parts(ac: str) -> list[int] | None:
+    """Parse AC into its per-ALT-allele counts.  None if any part isn't an int."""
+    parts: list[int] = []
     for part in ac.split(","):
         part = part.strip()
         if not part.isdigit():
             return None
-        total += int(part)
-    return total
+        parts.append(int(part))
+    return parts
+
+
+def _ac_total(ac: str) -> int | None:
+    parts = _ac_parts(ac)
+    return sum(parts) if parts is not None else None
+
+
+def _code_from_ac_parts(parts: list[int]) -> int:
+    """Classify a diploid genotype from per-ALT-allele AC counts.
+
+    A single nonzero entry of 1 is an ordinary heterozygote (0/x); a single
+    nonzero entry of 2 is a true homozygous-alt (x/x). At a multiallelic site,
+    AC has one entry per ALT allele, and two or more nonzero entries (e.g.
+    ``AC=1,1``) means two *different* non-reference alleles are both present
+    once each - a 1/2-style call. That is a heterozygote, not a homozygote,
+    even though the entries sum to 2 - summing them without checking how many
+    alleles they came from is exactly the multiallelic misread this whole
+    module exists to avoid in *other* tools' AC/AN-only readers, so it must
+    not recur here.
+    """
+    total = sum(parts)
+    n_nonzero = sum(1 for p in parts if p > 0)
+    if n_nonzero >= 2:
+        # The only AN=2-consistent multiallelic het is exactly two different
+        # ALT alleles present once each (e.g. AC=1,1), which sums to 2. A
+        # combination like AC=2,1 (n_nonzero=2, total=3) is not something a
+        # single diploid sample can produce - it means the AC field itself is
+        # internally inconsistent with AN=2, not that this is some other
+        # genotype. Flag it as MISSING rather than guessing HET just because
+        # more than one entry happened to be nonzero.
+        return HET if total == 2 else MISSING
+    return {0: HOMREF, 1: HET, 2: HOMALT}.get(total, MISSING)
 
 
 def genotype_from_info(info: dict[str, str]) -> tuple[int, int | None]:
@@ -142,15 +175,15 @@ def genotype_from_info(info: dict[str, str]) -> tuple[int, int | None]:
     if an is not None:
         if an.strip() != "2":
             return MISSING, None  # not a diploid single-sample record
-        total = _ac_total(info.get("AC", ""))
-        if total is None:
+        parts = _ac_parts(info.get("AC", ""))
+        if parts is None:
             return MISSING, None
-        return {0: HOMREF, 1: HET, 2: HOMALT}.get(total, MISSING), None
+        return _code_from_ac_parts(parts), None
 
     if "AC" in info:
-        total = _ac_total(info["AC"])
-        if total is not None:
-            return {0: HOMREF, 1: HET, 2: HOMALT}.get(total, MISSING), total
+        parts = _ac_parts(info["AC"])
+        if parts is not None:
+            return _code_from_ac_parts(parts), sum(parts)
 
     af = info.get("AF", "").split(",")[0].strip()
     try:

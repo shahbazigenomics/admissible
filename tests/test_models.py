@@ -87,6 +87,34 @@ def test_each_model_finds_its_planted_variant(cohort):
     assert c["compound-het"] == 1  # one gene with two qualifying hets
 
 
+def test_compound_het_does_not_count_a_site_when_the_unaffected_sample_is_missing(tmp_path):
+    """A missing unaffected genotype must not satisfy 'does not carry it' - the
+    same exclusion-verification rule every other model in this sweep already
+    enforces via ``_exclusion_verified``. Before this was fixed,
+    ``compound_het_counts`` checked ``gt(u, site) != HOMALT`` directly, and a
+    missing genotype (``MISSING != HOMALT`` is trivially true) passed that
+    check for free, inflating the count exactly the way the module's own
+    docstring says a missing genotype must never be allowed to.
+    """
+    rows = [
+        ("1", 6000, "GENEF", ["0/1", "0/0", "0/1", "0/1", "./."]),  # WELL missing here
+        ("1", 6500, "GENEF", ["0/0", "0/1", "0/1", "0/1", "0/0"]),
+    ]
+    body = HEADER
+    for chrom, pos, gene, gts in rows:
+        cells = "\t".join(("./.:0" if g == "./." else f"{g}:30") for g in gts)
+        body += f"{chrom}\t{pos}\t.\tA\tG\t500\tPASS\tGene.refGene={gene}\tGT:DP\t{cells}\n"
+    vcf = tmp_path / "family.vcf"
+    vcf.write_text(body)
+    ped = tmp_path / "family.ped"
+    ped.write_text(PED)
+    matrix = load_cohort([vcf])
+    res = check_models(matrix, read_ped(ped))
+    assert counts(res)["compound-het"] == 0
+    ch = next(m for m in res.metrics["profile"] if m["model"] == "compound-het")
+    assert ch["n_exclusion_unverified"] == 1
+
+
 def test_dominant_is_impossible_with_two_unaffected_genotyped_parents(cohort):
     """Not a limitation - the right answer.
 
