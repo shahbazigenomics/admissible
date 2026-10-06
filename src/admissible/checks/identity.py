@@ -321,6 +321,25 @@ def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[P
     return out
 
 
+def _mz_twin_plausible(ped: Pedigree, a: str, b: str) -> bool:
+    """Could this duplicate pair be monozygotic twins, going by the pedigree alone?
+
+    Identical twins are the same sex and belong to one family, so the twin
+    explanation is only offered when the pedigree puts the two samples in the
+    same family (full sibs, or same family with no stated link) AND records the
+    same, known sex for both.  A cross-family pair - the original failure this
+    check exists for - or a pair with an unknown or differing sex never gets the
+    hint, because for those the twin explanation would be misleading, and a hint
+    that appears everywhere gets read as "expected" and waves a real swap through.
+    """
+    ia, ib = ped.individuals.get(a), ped.individuals.get(b)
+    if ia is None or ib is None:
+        return False
+    if ped.relationship(a, b) not in (Relationship.FULL_SIB, Relationship.RELATED_UNSPECIFIED):
+        return False
+    return ia.sex is not Sex.UNKNOWN and ia.sex is ib.sex
+
+
 def _classify_duplicate(ev: PairEvidence, matrix: GenotypeMatrix) -> tuple[str, str, dict]:
     """Describe a duplicate pair by *evidence*, not by a guessed cause.
 
@@ -649,6 +668,14 @@ def check_identity(
             code, explanation, detail = _classify_duplicate(ev, matrix)
             declared = ped.relationship(ev.a, ev.b)
             cross_family = declared is Relationship.UNRELATED
+            twin_possible = _mz_twin_plausible(ped, ev.a, ev.b)
+            if twin_possible:
+                explanation += (
+                    "; also compatible with monozygotic twins, but only if this pair is "
+                    f"already known to be identical twins (the pedigree lists them as "
+                    f"same-sex {declared.value}); if that is not known, treat it as a "
+                    "sample swap or duplicate"
+                )
             findings.append(
                 Finding(
                     code=code,
@@ -667,6 +694,7 @@ def check_identity(
                     | {
                         "declared_relationship": declared.value,
                         "cross_family": cross_family,
+                        "possible_mz_twins": twin_possible,
                         "do_not_conclude": "anything that treats these as two independent samples",
                         "next_steps": [
                             "resolve sample identity (blocking)",
