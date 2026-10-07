@@ -69,24 +69,51 @@ def test_high_agreement_low_jaccard_pair_is_flagged_not_silently_dropped(tmp_pat
     assert res.metrics["n_duplicate_pairs"] == 0
 
 
-def test_a_pair_below_the_completeness_ratio_is_not_flagged(tmp_path):
-    """Same agreement/jaccard shape, but non-ref counts are close (no
-    asymmetric-completeness story) - HIGH_AGREEMENT_LOW_JACCARD should not
-    fire just because jaccard is low; the ratio condition is what makes this
-    finding specific to the actual failure mode rather than a second,
-    looser duplicate gate.
+def test_similar_sized_call_sets_with_low_jaccard_are_flagged_too(tmp_path):
+    """The same person called by two pipelines: each file has about the same
+    number of non-ref sites but they only partly overlap. Agreement on shared
+    sites is perfect, Jaccard is low, and the non-ref counts are within the
+    2x completeness ratio. This used to produce no finding at all.
     """
     lines = [HEADER_TWO]
-    for i in range(30):
+    # 60 sites both call, 20 only A calls, 20 only B calls -> jaccard 60/100.
+    # Make it clearly low: 50 shared, 40 A-only, 40 B-only -> 50/130 = 0.38.
+    for i in range(130):
         pos = 1000 + i
-        b_gt = "0/1" if i < 20 else "0/0"
-        lines.append(f"1\t{pos}\t.\tA\tG\t99\tPASS\t.\tGT\t0/1\t{b_gt}\n")
+        if i < 50:
+            a_gt = b_gt = "0/1"
+        elif i < 90:
+            a_gt, b_gt = "0/1", "0/0"
+        else:
+            a_gt, b_gt = "0/0", "0/1"
+        lines.append(f"1\t{pos}\t.\tA\tG\t99\tPASS\t.\tGT\t{a_gt}\t{b_gt}\n")
     vcf = tmp_path / "pair.vcf"
     vcf.write_text("".join(lines))
     matrix = load_cohort([vcf])
     cfg = IdentityConfig(min_shared_sites=15)
     res = check_identity(matrix, ped=None, cfg=cfg)
-    # n_nonref_a=30, n_nonref_b=20: ratio 1.5x, below the 2.0x default.
+
+    hits = [f for f in res.findings if f.code == "HIGH_AGREEMENT_LOW_JACCARD"]
+    assert len(hits) == 1
+    assert hits[0].severity is Severity.WARN
+    assert hits[0].evidence["jaccard"] < 0.6
+    assert hits[0].evidence["n_nonref_a"] == hits[0].evidence["n_nonref_b"] == 90
+    assert "called separately" in hits[0].message
+    assert res.metrics["n_duplicate_pairs"] == 0
+
+
+def test_low_agreement_pair_is_still_not_flagged(tmp_path):
+    """Low Jaccard alone (agreement below the bar) must stay silent."""
+    lines = [HEADER_TWO]
+    for i in range(60):
+        pos = 1000 + i
+        # shared on all 60 sites but genotypes differ on half -> agreement 0.5
+        a_gt, b_gt = ("0/1", "0/1") if i % 2 else ("0/1", "1/1")
+        lines.append(f"1\t{pos}\t.\tA\tG\t99\tPASS\t.\tGT\t{a_gt}\t{b_gt}\n")
+    vcf = tmp_path / "pair.vcf"
+    vcf.write_text("".join(lines))
+    matrix = load_cohort([vcf])
+    res = check_identity(matrix, ped=None, cfg=IdentityConfig(min_shared_sites=15))
     assert not [f for f in res.findings if f.code == "HIGH_AGREEMENT_LOW_JACCARD"]
 
 

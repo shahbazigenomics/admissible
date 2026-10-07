@@ -64,13 +64,12 @@ class IdentityConfig:
     dup_agreement: float = 0.95
     dup_jaccard: float = 0.60
     # jaccard = shared / union collapses whenever the two files have very
-    # different total non-ref counts - exactly what happens comparing a
-    # native VCF to genotypes reconstructed from an ANNOVAR multianno table's
-    # AC/AN (a smaller, differently-filtered site set). When the larger side's
-    # non-ref count is at least this many times the smaller side's, a high
-    # agreement with a low jaccard is treated as "possible duplicate, verify
-    # manually" (HIGH_AGREEMENT_LOW_JACCARD) rather than silently dropped just
-    # because jaccard alone missed it.
+    # different total non-ref counts (e.g. a native VCF vs genotypes
+    # reconstructed from an ANNOVAR multianno table's AC/AN), and also when
+    # the same person is called separately by two pipelines. High agreement
+    # with low jaccard is reported as "possible duplicate, verify manually"
+    # (HIGH_AGREEMENT_LOW_JACCARD) either way. This ratio only picks which
+    # explanation the message offers; it no longer decides whether to report.
     dup_completeness_ratio: float = 2.0
     # Cohort calibration refuses to reconcile below this separation.
     min_band_separation: float = 2.0
@@ -658,6 +657,30 @@ def check_identity(
                 )
             )
 
+    # --- pairs too sparse to compare --------------------------------------
+    # Pairs with fewer than min_shared_sites shared non-ref sites cannot be
+    # judged for duplication or relatedness. They used to be skipped without a
+    # word, so a clean report could hide that some pairs were never examined.
+    n_skipped = sum(1 for ev in pairs if ev.n_shared < cfg.min_shared_sites)
+    if n_skipped:
+        findings.append(
+            Finding(
+                code="DUPLICATE_CHECK_SKIPPED",
+                severity=Severity.INFO,
+                message=(
+                    f"{n_skipped} of {len(pairs)} sample pairs share fewer than "
+                    f"{cfg.min_shared_sites} non-ref sites and were not checked for "
+                    f"duplication or relatedness; a clean result does not cover them"
+                ),
+                subjects=[],
+                evidence={
+                    "n_pairs_skipped": n_skipped,
+                    "n_pairs_total": len(pairs),
+                    "min_shared_sites": cfg.min_shared_sites,
+                },
+            )
+        )
+
     # --- duplicates, cohort-wide ------------------------------------------
     duplicate_pairs: set[tuple[str, str]] = set()
     for ev in pairs:
@@ -667,7 +690,18 @@ def check_identity(
             duplicate_pairs.add((ev.a, ev.b))
             code, explanation, detail = _classify_duplicate(ev, matrix)
             declared = ped.relationship(ev.a, ev.b)
-            cross_family = declared is Relationship.UNRELATED
+            # ped.relationship() answers UNRELATED when either sample is absent
+            # from the pedigree (or no pedigree was given). That is "no
+            # information", not a declaration, so it must not be reported as one.
+            both_in_ped = ev.a in ped.individuals and ev.b in ped.individuals
+            cross_family = both_in_ped and declared is Relationship.UNRELATED
+            declared_text = (
+                f"but the pedigree declares them {declared.value}"
+                + (" ACROSS FAMILIES" if cross_family else "")
+                if both_in_ped
+                else "and the pedigree does not list both of them, so there is "
+                "no declared relationship to compare against"
+            )
             twin_possible = _mz_twin_plausible(ped, ev.a, ev.b)
             if twin_possible:
                 explanation += (
@@ -683,16 +717,14 @@ def check_identity(
                     message=(
                         f"{ev.a} and {ev.b} are the same individual "
                         f"(Jaccard {ev.jaccard:.4f}, agreement {ev.agreement:.4f} over "
-                        f"{ev.n_shared} shared sites) but the pedigree declares them "
-                        f"{declared.value}"
-                        + (" ACROSS FAMILIES" if cross_family else "")
-                        + f" - {explanation}"
+                        f"{ev.n_shared} shared sites) {declared_text}"
+                        f" - {explanation}"
                     ),
                     subjects=[ev.a, ev.b],
                     evidence=ev.to_dict()
                     | detail
                     | {
-                        "declared_relationship": declared.value,
+                        "declared_relationship": declared.value if both_in_ped else None,
                         "cross_family": cross_family,
                         "possible_mz_twins": twin_possible,
                         "do_not_conclude": "anything that treats these as two independent samples",
@@ -704,13 +736,7 @@ def check_identity(
                     },
                 )
             )
-        elif (
-            ev.agreement >= cfg.dup_agreement
-            and ev.n_nonref_a
-            and ev.n_nonref_b
-            and max(ev.n_nonref_a, ev.n_nonref_b) / min(ev.n_nonref_a, ev.n_nonref_b)
-            >= cfg.dup_completeness_ratio
-        ):
+        elif ev.agreement >= cfg.dup_agreement:
             # High agreement crossed the duplicate bar, but jaccard did not -
             # and the two samples have very different total non-ref counts,
             # the exact regime where jaccard is not a meaningful signal on its
@@ -723,6 +749,16 @@ def check_identity(
             # jaccard=0.181 across a >5x non-ref-count difference produced
             # zero findings for the whole cohort).
             declared = ped.relationship(ev.a, ev.b)
+            lo_n = min(ev.n_nonref_a, ev.n_nonref_b)
+            ratio = max(ev.n_nonref_a, ev.n_nonref_b) / lo_n if lo_n else float("inf")
+            completeness_note = (
+                "very different total non-ref counts, so this is possibly a "
+                "duplicate with unequal call-set completeness (e.g. native VCF vs "
+                "AC/AN-reconstructed)"
+                if ratio >= cfg.dup_completeness_ratio
+                else "similar-sized call sets, so this is possibly the same person "
+                "genotyped or called separately (e.g. two callers or two pipelines)"
+            )
             findings.append(
                 Finding(
                     code="HIGH_AGREEMENT_LOW_JACCARD",
@@ -732,10 +768,9 @@ def check_identity(
                         f"{ev.n_shared} shared sites (at or above the duplicate "
                         f"threshold {cfg.dup_agreement}), but their site sets only "
                         f"overlap at Jaccard {ev.jaccard:.4f} (below {cfg.dup_jaccard}) "
-                        f"with very different total non-ref counts ({ev.n_nonref_a} vs "
-                        f"{ev.n_nonref_b}) - possible duplicate with unequal call-set "
-                        f"completeness (e.g. native VCF vs AC/AN-reconstructed); not "
-                        f"classified as a duplicate automatically, verify manually"
+                        f"({ev.n_nonref_a} vs {ev.n_nonref_b} non-ref sites) - "
+                        f"{completeness_note}; not classified as a duplicate "
+                        f"automatically, verify manually"
                     ),
                     subjects=[ev.a, ev.b],
                     evidence=ev.to_dict()

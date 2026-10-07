@@ -17,8 +17,19 @@ here when this is tagged.)
   far fewer calls than the other (a native VCF versus a table rebuilt from AC/AN).
   A real pair with agreement 1.000 and Jaccard 0.181 passed silently. New WARN
   `HIGH_AGREEMENT_LOW_JACCARD`, shown when agreement clears the bar, Jaccard does
-  not, and the non-ref counts differ by at least `dup_completeness_ratio` (default
-  2.0). It does not auto-classify a duplicate: a human verifies.
+  not. It does not auto-classify a duplicate: a human verifies. The first version
+  also required the non-ref counts to differ by at least `dup_completeness_ratio`
+  (2.0); that requirement is dropped, because the same person called by two
+  pipelines gives similar-sized call sets with low Jaccard (synthetic: agreement
+  1.000, Jaccard 0.54) and was still missed. The ratio now only chooses which
+  explanation the message offers.
+- **Pairs with under 500 shared sites were skipped silently.** New INFO
+  `DUPLICATE_CHECK_SKIPPED` states how many pairs were not examined, so a clean
+  result is not read as covering them.
+- **No-pedigree duplicate message was wrong.** With no pedigree, or a sample missing
+  from it, the message said "the pedigree declares them unrelated ACROSS FAMILIES".
+  It now says the pedigree does not list both samples; the claim is made only when
+  both are in the pedigree.
 - **Pairwise evidence was only in the JSON.** `-v` now prints a `PAIRWISE EVIDENCE`
   table in the text report for pairs near the duplicate or relatedness thresholds.
 - **Mixed genotype sources were pooled silently.** New WARN `MIXED_GENOTYPE_SOURCE`
@@ -40,6 +51,11 @@ here when this is tagged.)
 
 ### Changed
 
+- A blocking duplicate between two samples that the pedigree lists as same-sex full
+  siblings (or relatives of unspecified degree) now also says it is compatible with
+  monozygotic twins, but only if the pair is already known to be identical twins;
+  otherwise treat it as a swap or duplicate. Still blocking, and the evidence carries
+  `possible_mz_twins`. Nothing is downgraded automatically.
 - README and design notes: the claim that somalier/peddy score against a panel that
   coding-only call sets barely overlap was measured and found backwards (85.4% of
   peddy's GRCh37 panel is in RefSeq CDS); corrected, with the scripts to reproduce
@@ -49,19 +65,16 @@ here when this is tagged.)
 
 ### Known limitations (found after 0.1.0, not fixed in this release)
 
-- The duplicate warning needs a 2x difference in non-ref counts. A same-person pair
-  with similar-sized call sets and Jaccard below 0.60 gets no finding (seen on
-  synthetic data: agreement 1.000, Jaccard 0.54).
-- Monozygotic twins reach duplicate-level agreement and are reported as
+- Monozygotic twins reach duplicate-level agreement and are still reported as
   `DUPLICATE_SAME_INDIVIDUAL` (blocking); there is no way to declare a twin pair
-  (seen on synthetic data).
-- Pairs sharing fewer than 500 non-ref sites are skipped for duplicate detection
-  without a message.
+  yet. A `--mz-twins` declaration is planned for 0.2.0.
 - With no clean gap in the cohort's chrX heterozygosity the sex boundary falls back
   to 0.45; females with depressed chrX heterozygosity (consanguinity, long runs of
   homozygosity) can then be called male. Borderline calls should be verified.
-- With no pedigree, a duplicate message still says "the pedigree declares them
-  unrelated ACROSS FAMILIES".
+  Hardening this changes calls, so it is planned for 0.2.0.
+- The duplicate thresholds (agreement 0.95, Jaccard 0.60, 500 shared sites) are
+  conventions, not derived values. On real CEPH 1463 data the highest non-duplicate
+  agreement was 0.826.
 
 ## [0.1.0] — 2026-09-13
 
