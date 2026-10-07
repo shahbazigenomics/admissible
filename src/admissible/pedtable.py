@@ -28,8 +28,10 @@ from .ped import Affection, Individual, Pedigree, Sex
 # of spaces, underscores and dots before matching.
 _ID = ("id", "iid", "sample", "sampleid", "samplename", "individual",
        "individualid", "person", "subject", "name")
-_FATHER = ("father", "pat", "paternalid", "fatherid", "dad", "sire", "pathid")
-_MOTHER = ("mother", "mat", "maternalid", "motherid", "mum", "mom", "dam")
+_FATHER = ("father", "pat", "paternalid", "fatherid", "dad", "sire", "pathid",
+           "dadid", "paternal", "patid")
+_MOTHER = ("mother", "mat", "maternalid", "motherid", "mum", "mom", "dam",
+           "momid", "mumid", "maternal", "matid")
 _SEX = ("sex", "gender")
 _AFFECTED = ("affected", "affection", "pheno", "phenotype", "status",
              "affectedstatus", "disease")
@@ -51,6 +53,11 @@ def _find(header: list[str], names: tuple[str, ...]) -> int | None:
     for want in names:
         if want in normed:
             return normed.index(want)
+    # "dad_id", "mom_id", "sire_id" and the like: accept a trailing "id" on any
+    # listed spelling, so a new spelling of the same column is not lost.
+    for want in names:
+        if want + "id" in normed:
+            return normed.index(want + "id")
     return None
 
 
@@ -136,6 +143,16 @@ def read_ped_table(path: str | os.PathLike[str]) -> Pedigree:
         if idx is None:
             ped.warnings.append(
                 f"{path}: no {label} column; every sample will be {label}-unknown"
+            )
+    # Without parent columns every sample is read as a founder, and every
+    # relationship check then runs against a pedigree with no relationships in
+    # it. That used to happen without a word.
+    for label, idx in (("father", i_fa), ("mother", i_mo)):
+        if idx is None:
+            ped.warnings.append(
+                f"{path}: no {label} column recognised in the header "
+                f"({', '.join(header)}); every sample will be read as having no "
+                f"{label}, so parent links are lost"
             )
 
     def cell(row: list[str], idx: int | None) -> str:
