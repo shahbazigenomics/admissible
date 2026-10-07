@@ -12,7 +12,7 @@ identifiers:
     value: 10.5281/zenodo.22738502
     description: Concept DOI, resolving to the latest release
 license: MIT
-version: 0.1.0
+version: 0.1.1
 date-released: "2026-09-12"
 keywords:
   - exome sequencing

@@ -99,7 +99,7 @@ class Report:
     family_id: str
     checks: list[CheckResult] = field(default_factory=list)
     inputs: dict[str, Any] = field(default_factory=dict)
-    tool_version: str = "0.1.0"
+    tool_version: str = "0.1.1"
 
     @property
     def verdict(self) -> Verdict:

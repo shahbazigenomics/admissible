@@ -3,7 +3,67 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — unreleased
+## [0.1.1] — unreleased
+
+Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
+real 13-sample, 3-family familial-IBD WES cohort. **Everyone installing from PyPI
+before this release has 0.1.0, which lacks all of them.** (Set the release date
+here when this is tagged.)
+
+### Fixed
+
+- **A real cross-format duplicate produced no finding.** The duplicate gate needed
+  `agreement >= 0.95` *and* `jaccard >= 0.60`; Jaccard collapses when one file has
+  far fewer calls than the other (a native VCF versus a table rebuilt from AC/AN).
+  A real pair with agreement 1.000 and Jaccard 0.181 passed silently. New WARN
+  `HIGH_AGREEMENT_LOW_JACCARD`, shown when agreement clears the bar, Jaccard does
+  not, and the non-ref counts differ by at least `dup_completeness_ratio` (default
+  2.0). It does not auto-classify a duplicate: a human verifies.
+- **Pairwise evidence was only in the JSON.** `-v` now prints a `PAIRWISE EVIDENCE`
+  table in the text report for pairs near the duplicate or relatedness thresholds.
+- **Mixed genotype sources were pooled silently.** New WARN `MIXED_GENOTYPE_SOURCE`
+  names which samples have reconstructed (AC/AN) genotypes when a cohort mixes
+  them with native VCF genotypes. Per-source calibration is deliberately not done.
+- A header-only VCF returned WARN instead of UNKNOWN from the provenance check,
+  which let its audit exit 0 instead of 2 ("could not read the input").
+- The ANNOVAR AC/AN fallback read a multiallelic `1/2` heterozygote (`AC=1,1`) as
+  homozygous-alt, and accepted an internally inconsistent `AC=2,1` as a het; any AC
+  whose parts do not sum to 2 now reads as missing.
+- `compound_het_counts` could count a site whose unaffected genotype was missing,
+  inflating the count.
+- A two-node pedigree cycle (A's father is B, B's father is A) was accepted.
+- Cohort-wide pairwise relatedness had no cap on sample count; a header declaring
+  thousands of samples could run for a long time. Capped by
+  `max_samples_for_pairwise` (2,000) with a reported finding.
+- A cohort PED no longer names families that were not read, and the report header
+  lists only the families actually supplied.
+
+### Changed
+
+- README and design notes: the claim that somalier/peddy score against a panel that
+  coding-only call sets barely overlap was measured and found backwards (85.4% of
+  peddy's GRCh37 panel is in RefSeq CDS); corrected, with the scripts to reproduce
+  it in `validation/`.
+- Python 3.14 added to CI; a Dockerfile and a project website added; PyPI install
+  instructions (`pipx` recommended) added.
+
+### Known limitations (found after 0.1.0, not fixed in this release)
+
+- The duplicate warning needs a 2x difference in non-ref counts. A same-person pair
+  with similar-sized call sets and Jaccard below 0.60 gets no finding (seen on
+  synthetic data: agreement 1.000, Jaccard 0.54).
+- Monozygotic twins reach duplicate-level agreement and are reported as
+  `DUPLICATE_SAME_INDIVIDUAL` (blocking); there is no way to declare a twin pair
+  (seen on synthetic data).
+- Pairs sharing fewer than 500 non-ref sites are skipped for duplicate detection
+  without a message.
+- With no clean gap in the cohort's chrX heterozygosity the sex boundary falls back
+  to 0.45; females with depressed chrX heterozygosity (consanguinity, long runs of
+  homozygosity) can then be called male. Borderline calls should be verified.
+- With no pedigree, a duplicate message still says "the pedigree declares them
+  unrelated ACROSS FAMILIES".
+
+## [0.1.0] — 2026-09-13
 
 First release. All five checks implemented.
 

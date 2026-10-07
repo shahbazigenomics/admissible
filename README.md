@@ -53,7 +53,7 @@ That gap is this tool.
 It never interprets a variant. It audits the evidence base that an interpretation
 would rest on, across five checks:
 
-| # | Check | Question | 0.1.0 |
+| # | Check | Question | 0.1.1 |
 |---|-------|----------|-------|
 | 1 | Identity | Is each sample who the pedigree says it is? | implemented |
 | 2 | Genotype | Which genotypes are not supported by their own evidence? | implemented |
