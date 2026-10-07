@@ -260,7 +260,8 @@ its own canonical failure case.
 | truly unrelated pairs called related | **0 of 11** |
 | first-degree pairs recognised as related | **all**, minimum φ 0.153 |
 | false duplicate pairs across 136 comparisons | **0** |
-| the correct pedigree | accepted, no findings |
+| the published pedigree, kinship and sex | no false positives |
+| the published pedigree, parent-offspring IBS0 check (added in 0.1.1) | flags 7 declared parent-child pairs whose genotypes look like siblings (NA12877 with 6 of his children, and NA12889 with NA12877); whether the pedigree or this extract is at fault is not established. peddy's own reduced `good.ped` passes |
 | peddy's corrupted pedigree (father/daughter swapped) | caught, both swapped samples named |
 
 Two things this exposed that the synthetic fixtures could not, both now

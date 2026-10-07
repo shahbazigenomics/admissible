@@ -3,28 +3,6 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- **`HOM_CONTRADICTED_BY_LIKELIHOOD` compared a homozygous-alt call with the wrong
-  genotype at multiallelic sites.** The check always read `PL[1]` (the `0/1`
-  likelihood). In the VCF's PL order (`0/0, 0/1, 1/1, 0/2, 1/2, 2/2, ...`) that is
-  only the right comparison for allele 1; for a `2/2` call it is a genotype with no
-  allele 2 in it, so a `2/2` whose `0/2` was nearly as likely passed. It now takes the
-  nearest genotype carrying the called allele once (`0/k`, and `j/k` for the other
-  alts), measured from the called genotype's own PL. Biallelic sites are unchanged.
-  On CEPH 1463 it raises the likelihood flag from 335 to 370 calls and the suspect
-  homozygous total from 391 to 412.
-- **Every haploid alt call was flagged as a suspect homozygote.** Haploid calls (male
-  chrX outside PAR, chrY, mitochondrion) have one PL per allele, and the diploid
-  indexing read `PL[1]` (the alt's own, best, likelihood) as a het margin of 0, so
-  `FALSE_HOM_SUSPECT` fired on all of them. They are now compared with their rival
-  alleles (reference above all). Half-calls such as `./1` get no likelihood margin.
-  Haploid calls are still counted with the homozygous-alt calls in the totals, since
-  a hemizygous call matters for X-linked recessive models; CEPH 1463 has almost none
-  (4 records) so its numbers do not move.
-
 ## [0.1.1] — unreleased
 
 Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
@@ -89,6 +67,24 @@ here when this is tagged.)
 - A cohort PED no longer names families that were not read, and the report header
   lists only the families actually supplied.
 
+- **`HOM_CONTRADICTED_BY_LIKELIHOOD` compared a homozygous-alt call with the wrong
+  genotype at multiallelic sites.** The check always read `PL[1]` (the `0/1`
+  likelihood). In the VCF's PL order (`0/0, 0/1, 1/1, 0/2, 1/2, 2/2, ...`) that is
+  only the right comparison for allele 1; for a `2/2` call it is a genotype with no
+  allele 2 in it, so a `2/2` whose `0/2` was nearly as likely passed. It now takes the
+  nearest genotype carrying the called allele once (`0/k`, and `j/k` for the other
+  alts), measured from the called genotype's own PL. Biallelic sites are unchanged.
+  On CEPH 1463 it raises the likelihood flag from 335 to 370 calls and the suspect
+  homozygous total from 391 to 412.
+- **Every haploid alt call was flagged as a suspect homozygote.** Haploid calls (male
+  chrX outside PAR, chrY, mitochondrion) have one PL per allele, and the diploid
+  indexing read `PL[1]` (the alt's own, best, likelihood) as a het margin of 0, so
+  `FALSE_HOM_SUSPECT` fired on all of them. They are now compared with their rival
+  alleles (reference above all). Half-calls such as `./1` get no likelihood margin.
+  Haploid calls are still counted with the homozygous-alt calls in the totals, since
+  a hemizygous call matters for X-linked recessive models; CEPH 1463 has almost none
+  (4 records) so its numbers do not move.
+
 ### Changed
 
 - A blocking duplicate between two samples that the pedigree lists as same-sex full
@@ -102,6 +98,19 @@ here when this is tagged.)
   it in `validation/`.
 - Python 3.14 added to CI; a Dockerfile and a project website added; PyPI install
   instructions (`pipx` recommended) added.
+- **A declared female called male now comes with the evidence that separates a sample
+  swap from a real female with a homozygous X.** chrX heterozygosity cannot tell
+  them apart (consanguinity and long runs of homozygosity depress it), so the call
+  and the BLOCKING severity are unchanged. The `SEX_MISMATCH` message and evidence
+  now add her autosomal het fraction next to the cohort median (runs of homozygosity
+  lower it genome-wide, a swap does not) and, when the cohort's males have any, her
+  chrY call count. The autosomal het fraction is also reported for every sample.
+  The comparison group is samples from other families when there are at least three,
+  because consanguinity lowers autosomal het for a whole family and comparing a
+  member with her own relatives would hide it; otherwise it is all other samples and
+  the message says relatives weaken the comparison.
+  Checked on a simulated cohort only; no consanguineous data was available, so no
+  interpretation threshold is applied.
 
 ### Known limitations (found after 0.1.0, not fixed in this release)
 
