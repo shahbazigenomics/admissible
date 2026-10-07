@@ -165,26 +165,35 @@ def _gt_index(i: int, j: int) -> int:
     return j * (j + 1) // 2 + i
 
 
-def hom_alt_het_margin(pl: list[int], allele: int) -> int | None:
-    """How far behind the called ``allele/allele`` the nearest het is, in PL units.
+def hom_alt_het_margin(pl: list[int], allele: int, ploidy: int = 2) -> int | None:
+    """How far behind the called homozygous-alt genotype its nearest rival is, in PL.
 
-    The competitors of a homozygous-alternate call are the genotypes that carry the
-    called allele only once: ``0/allele`` and, at a multiallelic site, ``j/allele``
-    for every other alt ``j``. The PL list is ordered 0/0, 0/1, 1/1, 0/2, 1/2, 2/2,
-    ..., so ``PL[1]`` is the right comparison only for allele 1; for a ``2/2`` call
-    it is the likelihood of a genotype that does not contain allele 2 at all, which
-    is how a contradicted ``2/2`` used to pass.
+    Diploid ``allele/allele``: the rivals are the genotypes that carry the called
+    allele only once, ``0/allele`` and, at a multiallelic site, ``j/allele`` for every
+    other alt ``j``. The PL list is ordered 0/0, 0/1, 1/1, 0/2, 1/2, 2/2, ..., so
+    ``PL[1]`` is the right comparison only for allele 1; for a ``2/2`` call it is the
+    likelihood of a genotype with no allele 2 in it, which is how a contradicted
+    ``2/2`` used to pass.
 
-    Measured from the called genotype's own PL rather than from zero, so a call
-    that is not even the most likely genotype scores worse, not better.
-    Returns None when the list is too short to hold the genotypes needed.
+    Haploid (male chrX outside PAR, chrY, mitochondrion): PL has one entry per allele,
+    so there is no het; the rival is any other allele. The diploid indexing read a
+    haploid ``1`` with PL ``255,0`` as a het margin of 0 and flagged every such call.
+
+    Measured from the called genotype's own PL rather than from zero, so a call that
+    is not the most likely genotype scores worse, not better. Returns None when the
+    list cannot be read for this genotype (too short, or a half-call such as ``./1``).
     """
+    if ploidy == 1:
+        if allele >= len(pl):
+            return None
+        rivals = [v for i, v in enumerate(pl) if i != allele]
+        return min(rivals) - pl[allele] if rivals else None
+    if ploidy != 2:
+        return None
     called = _gt_index(allele, allele)
     if called >= len(pl):
         return None
-    competitors = []
-    for j in range(0, allele):
-        competitors.append(_gt_index(j, allele))
+    competitors = [_gt_index(j, allele) for j in range(allele)]
     # genotypes allele/k for k > allele sit after the called one in the list
     k = allele + 1
     while _gt_index(allele, k) < len(pl):
@@ -264,7 +273,11 @@ def evaluate_genotype(
             flags.append("HOM_NOT_ASSESSABLE")
         pl_het = None
         if pl and len(pl) >= 2:
-            pl_het = hom_alt_het_margin(pl, int(alleles[0]))
+            fields = [f for f in gt.replace("|", "/").split("/")]
+            # A half-call such as "./1" has one allele but diploid-shaped PL; it is
+            # not a homozygote and has no clean margin.
+            ploidy = len(fields) if len(fields) == len(alleles) else 0
+            pl_het = hom_alt_het_margin(pl, int(alleles[0]), ploidy)
             if pl_het is not None:
                 ev["PL_het"] = pl_het
         if dp is not None and dp < cfg.hom_min_depth:

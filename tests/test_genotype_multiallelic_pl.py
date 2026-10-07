@@ -64,3 +64,35 @@ def test_biallelic_behaviour_is_unchanged():
 )
 def test_margin_helper(pl, allele, want):
     assert hom_alt_het_margin(pl, allele) == want
+
+
+# --- haploid calls (male chrX outside PAR, chrY, mitochondrion) -------------
+
+
+def test_a_clean_haploid_alt_call_is_not_flagged_by_the_likelihood_rule():
+    # Haploid PL has one entry per allele: ref 255, alt 0. The diploid indexing read
+    # PL[1]=0 as "het is no worse than the call" and flagged every haploid alt call.
+    flags, ev = _flags("1", "255,0", "0,30")
+    assert "HOM_CONTRADICTED_BY_LIKELIHOOD" not in flags
+    assert "FALSE_HOM_SUSPECT" not in flags
+    assert ev["PL_het"] == 255
+
+
+def test_a_haploid_call_whose_reference_is_nearly_as_likely_is_flagged():
+    flags, ev = _flags("1", "6,0", "10,20")
+    assert "HOM_CONTRADICTED_BY_LIKELIHOOD" in flags
+    assert ev["PL_het"] == 6
+
+
+def test_a_half_call_has_no_likelihood_margin():
+    flags, ev = _flags("./1", "255,5,0", "0,30")
+    assert "HOM_CONTRADICTED_BY_LIKELIHOOD" not in flags
+    assert "PL_het" not in ev
+
+
+def test_haploid_margin_helper():
+    assert hom_alt_het_margin([255, 0], 1, ploidy=1) == 255
+    assert hom_alt_het_margin([255, 0, 40], 1, ploidy=1) == 40
+    assert hom_alt_het_margin([0, 255], 1, ploidy=1) == -255  # called allele is not best
+    assert hom_alt_het_margin([0], 1, ploidy=1) is None
+    assert hom_alt_het_margin([0, 5, 9], 1, ploidy=3) is None

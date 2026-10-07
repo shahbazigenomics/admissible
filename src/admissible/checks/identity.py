@@ -176,7 +176,7 @@ class PairEvidence:
         return "unrelated"
 
     def to_dict(self) -> dict:
-        d = {
+        d: dict[str, object] = {
             "a": self.a,
             "b": self.b,
             "mode": "dense" if self.dense else "sparse-nonref",

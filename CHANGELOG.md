@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   alts), measured from the called genotype's own PL. Biallelic sites are unchanged.
   On CEPH 1463 it raises the likelihood flag from 335 to 370 calls and the suspect
   homozygous total from 391 to 412.
+- **Every haploid alt call was flagged as a suspect homozygote.** Haploid calls (male
+  chrX outside PAR, chrY, mitochondrion) have one PL per allele, and the diploid
+  indexing read `PL[1]` (the alt's own, best, likelihood) as a het margin of 0, so
+  `FALSE_HOM_SUSPECT` fired on all of them. They are now compared with their rival
+  alleles (reference above all). Half-calls such as `./1` get no likelihood margin.
+  Haploid calls are still counted with the homozygous-alt calls in the totals, since
+  a hemizygous call matters for X-linked recessive models; CEPH 1463 has almost none
+  (4 records) so its numbers do not move.
 
 ## [0.1.1] — unreleased
 
