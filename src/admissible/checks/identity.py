@@ -122,6 +122,10 @@ class SexEvidence:
     n_y_sites: int
     inferred: Sex
     reason: str
+    # Context, never used for the call itself: het / (het + hom-alt) over this
+    # sample's non-ref autosomal sites. A person with long runs of homozygosity
+    # (consanguinity) has it depressed genome-wide, a sample swap does not.
+    autosomal_het_frac: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -133,6 +137,7 @@ class SexEvidence:
             "chrY_sites": self.n_y_sites,
             "inferred_sex": self.inferred.value,
             "basis": self.reason,
+            "autosomal_het_frac": self.autosomal_het_frac,
         }
 
 
@@ -238,14 +243,18 @@ def sex_evidence(
 
     x_sites: set[int] = set()
     y_sites: set[int] = set()
+    auto_sites: set[int] = set()
     for site_id, (chrom, pos, _ref, _alt) in enumerate(matrix.index.keys):
         c = normalize_contig(chrom)
-        if c == "X" and (build is None or regions.usable(c, pos)):
+        if c.isdigit() and 1 <= int(c) <= 22:
+            auto_sites.add(site_id)
+        elif c == "X" and (build is None or regions.usable(c, pos)):
             x_sites.add(site_id)
         elif c == "Y" and (build is None or regions.usable(c, pos)):
             y_sites.add(site_id)
 
     raw: dict[str, tuple[int, int, int]] = {}
+    auto_frac: dict[str, float | None] = {}
     for sample in matrix.samples:
         s = sets[sample]
         nonref = s.nonref
@@ -254,6 +263,8 @@ def sex_evidence(
         n_het = len(s.het & x_sites)
         n_y = len(nonref & y_sites)
         raw[sample] = (n_x, n_het, n_y)
+        n_auto = len(nonref & auto_sites)
+        auto_frac[sample] = len(s.het & auto_sites) / n_auto if n_auto >= 200 else None
 
     fracs = [h / x for x, h, _ in raw.values() if x >= cfg.min_x_sites]
     boundary = _calibrate_sex_boundary(fracs, cfg, notes)
@@ -265,6 +276,7 @@ def sex_evidence(
                 sample, n_x, n_het, float("nan"), float("nan"), float("nan"), n_y,
                 Sex.UNKNOWN,
                 f"only {n_x} usable chrX variant sites (need {cfg.min_x_sites})",
+                auto_frac.get(sample),
             )
             continue
         frac = n_het / n_x
@@ -278,7 +290,9 @@ def sex_evidence(
                 Sex.UNKNOWN,
                 "95% interval straddles the cohort boundary; sex is not determined",
             )
-        evidence[sample] = SexEvidence(sample, n_x, n_het, frac, lo, hi, n_y, inferred, why)
+        evidence[sample] = SexEvidence(
+            sample, n_x, n_het, frac, lo, hi, n_y, inferred, why, auto_frac.get(sample)
+        )
 
     if any(e.n_y_sites for e in evidence.values()):
         notes.append(
@@ -287,6 +301,60 @@ def sex_evidence(
             "carry no evidential weight and are not used in the sex call."
         )
     return evidence, boundary, notes
+
+
+def _female_roh_context(
+    sample: str,
+    declared: Sex,
+    ev: SexEvidence,
+    sex_ev: dict[str, SexEvidence],
+    boundary: float,
+    cfg: IdentityConfig,
+) -> tuple[str, dict]:
+    """Say what separates a swapped sample from a female with a homozygous X.
+
+    chrX heterozygosity cannot tell them apart: a declared female called male may
+    be a sample swap, or a real female whose X is mostly homozygous (consanguinity,
+    long runs of homozygosity). Autosomal heterozygosity can: runs of homozygosity
+    lower it genome-wide, a swap leaves it alone. chrY calls help too, in the other
+    direction. Both are reported next to the cohort's own values, and neither
+    changes the call or the severity - a clear interpretation threshold would be
+    invented, since no consanguineous data was available to calibrate one.
+    """
+    if declared is not Sex.FEMALE or ev.inferred is not Sex.MALE:
+        return "", {}
+    others_auto = sorted(
+        e.autosomal_het_frac
+        for n, e in sex_ev.items()
+        if n != sample and e.autosomal_het_frac is not None
+    )
+    males_y = sorted(
+        e.n_y_sites for n, e in sex_ev.items() if n != sample and e.inferred is Sex.MALE
+    )
+
+    def median(xs):
+        return xs[len(xs) // 2] if xs else None
+
+    med_auto, med_y = median(others_auto), median(males_y)
+    ctx = {
+        "female_homozygous_x_possible": True,
+        "cohort_median_autosomal_het_frac": med_auto,
+        "cohort_median_chrY_sites_of_male_calls": med_y,
+        "boundary_calibrated": boundary != cfg.default_sex_boundary,
+    }
+    text = (
+        ". A real female with a mostly homozygous X (consanguinity, long runs of "
+        "homozygosity) can fall here too"
+    )
+    if ev.autosomal_het_frac is not None and med_auto is not None:
+        text += (
+            f"; her autosomal het fraction is {ev.autosomal_het_frac:.1%} against a "
+            f"cohort median of {med_auto:.1%} (clearly lower points to homozygosity, "
+            f"similar points to a swap)"
+        )
+    if med_y:
+        text += f"; chrY calls {ev.n_y_sites} against a median of {med_y} in samples called male"
+    return text, ctx
 
 
 def _calibrate_sex_boundary(fracs: list[float], cfg: IdentityConfig, notes: list[str]) -> float:
@@ -661,6 +729,7 @@ def check_identity(
             continue
         if declared is not ev.inferred:
             n_sex_mismatch += 1
+            extra, ctx = _female_roh_context(sample, declared, ev, sex_ev, sex_boundary, cfg)
             findings.append(
                 Finding(
                     code="SEX_MISMATCH",
@@ -670,9 +739,11 @@ def check_identity(
                         f"{ev.inferred.value} (chrX het {ev.x_het_frac:.1%} over "
                         f"{ev.n_x_sites} sites, 95% CI "
                         f"{ev.ci_low:.1%}-{ev.ci_high:.1%}; boundary {sex_boundary:.1%})"
+                        + extra
                     ),
                     subjects=[sample],
                     evidence=ev.to_dict()
+                    | ctx
                     | {
                         "declared_sex": declared.value,
                         "boundary": sex_boundary,

@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **A declared female called male now comes with the evidence that separates a sample
+  swap from a real female with a homozygous X.** chrX heterozygosity cannot tell
+  them apart (consanguinity and long runs of homozygosity depress it), so the call
+  and the BLOCKING severity are unchanged. The `SEX_MISMATCH` message and evidence
+  now add her autosomal het fraction next to the cohort median (runs of homozygosity
+  lower it genome-wide, a swap does not) and, when the cohort's males have any, her
+  chrY call count. The autosomal het fraction is also reported for every sample.
+  Checked on a simulated cohort only; no consanguineous data was available, so no
+  interpretation threshold is applied.
+- An attempted fix that refused male calls above a fixed chrX het of 0.30 was
+  dropped: male het is 0.12 on CEPH 1463 but 0.35 in the test fixture, so a fixed
+  ceiling is wrong for some datasets.
+
 ## [0.1.1] — unreleased
 
 Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
