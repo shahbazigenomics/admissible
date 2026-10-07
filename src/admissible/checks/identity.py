@@ -310,6 +310,7 @@ def _female_roh_context(
     sex_ev: dict[str, SexEvidence],
     boundary: float,
     cfg: IdentityConfig,
+    ped: Pedigree,
 ) -> tuple[str, dict]:
     """Say what separates a swapped sample from a female with a homozygous X.
 
@@ -323,11 +324,29 @@ def _female_roh_context(
     """
     if declared is not Sex.FEMALE or ev.inferred is not Sex.MALE:
         return "", {}
-    others_auto = sorted(
+    # In a consanguineous family every member's autosomal het is depressed, so
+    # comparing her with her own relatives would make a real homozygous-X female
+    # look like "similar, so a swap". Prefer samples from OTHER families, and say
+    # which group was used.
+    mine = ped.individuals.get(sample)
+    other_family = [
         e.autosomal_het_frac
         for n, e in sex_ev.items()
-        if n != sample and e.autosomal_het_frac is not None
-    )
+        if n != sample
+        and e.autosomal_het_frac is not None
+        and mine is not None
+        and n in ped.individuals
+        and ped.individuals[n].family_id != mine.family_id
+    ]
+    if len(other_family) >= 3:
+        others_auto, group = sorted(other_family), "samples from other families"
+    else:
+        others_auto = sorted(
+            e.autosomal_het_frac
+            for n, e in sex_ev.items()
+            if n != sample and e.autosomal_het_frac is not None
+        )
+        group = "all other samples, which may include her relatives"
     males_y = sorted(
         e.n_y_sites for n, e in sex_ev.items() if n != sample and e.inferred is Sex.MALE
     )
@@ -339,6 +358,7 @@ def _female_roh_context(
     ctx = {
         "female_homozygous_x_possible": True,
         "cohort_median_autosomal_het_frac": med_auto,
+        "autosomal_comparison_group": group,
         "cohort_median_chrY_sites_of_male_calls": med_y,
         "boundary_calibrated": boundary != cfg.default_sex_boundary,
     }
@@ -349,8 +369,15 @@ def _female_roh_context(
     if ev.autosomal_het_frac is not None and med_auto is not None:
         text += (
             f"; her autosomal het fraction is {ev.autosomal_het_frac:.1%} against a "
-            f"cohort median of {med_auto:.1%} (clearly lower points to homozygosity, "
-            f"similar points to a swap)"
+            f"median of {med_auto:.1%} in {group} (clearly lower points to "
+            f"homozygosity, similar points to a swap"
+            + (
+                ""
+                if group.startswith("samples from other")
+                else "; relatives of hers in the comparison weaken this, since "
+                "consanguinity lowers everyone in the family"
+            )
+            + ")"
         )
     if med_y:
         text += f"; chrY calls {ev.n_y_sites} against a median of {med_y} in samples called male"
@@ -729,7 +756,7 @@ def check_identity(
             continue
         if declared is not ev.inferred:
             n_sex_mismatch += 1
-            extra, ctx = _female_roh_context(sample, declared, ev, sex_ev, sex_boundary, cfg)
+            extra, ctx = _female_roh_context(sample, declared, ev, sex_ev, sex_boundary, cfg, ped)
             findings.append(
                 Finding(
                     code="SEX_MISMATCH",

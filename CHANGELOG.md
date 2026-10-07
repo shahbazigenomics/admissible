@@ -14,6 +14,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   now add her autosomal het fraction next to the cohort median (runs of homozygosity
   lower it genome-wide, a swap does not) and, when the cohort's males have any, her
   chrY call count. The autosomal het fraction is also reported for every sample.
+  The comparison group is samples from other families when there are at least three,
+  because consanguinity lowers autosomal het for a whole family and comparing a
+  member with her own relatives would hide it; otherwise it is all other samples and
+  the message says relatives weaken the comparison.
   Checked on a simulated cohort only; no consanguineous data was available, so no
   interpretation threshold is applied.
 - An attempted fix that refused male calls above a fixed chrX het of 0.30 was

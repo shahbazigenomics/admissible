@@ -108,3 +108,67 @@ def test_context_is_only_added_for_a_declared_female_called_male(tmp_path):
             continue
         assert f.evidence["declared_sex"] == "female"
         assert f.evidence["inferred_sex"] == "male"
+
+
+# --- a consanguineous family must not be compared with itself --------------
+
+FAM_A = ["A_ROHF", "A_REL1", "A_REL2"]  # one family, all with depressed autosomal het
+FAM_B = ["B1", "B2", "B3", "B4", "B5"]
+TWO_FAMILIES = FAM_A + FAM_B
+
+
+def _two_family_result(tmp_path):
+    rng = random.Random(5)
+    head = (
+        "##fileformat=VCFv4.2\n##contig=<ID=1,length=249250621>\n##contig=<ID=X,length=155270560>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(TWO_FAMILIES) + "\n"
+    )
+    rows = [head]
+    n_auto = 3000
+    for i in range(n_auto):
+        gts = []
+        for s in TWO_FAMILIES:
+            roh = s in FAM_A and i < 0.45 * n_auto  # the whole family is inbred
+            if rng.random() < 0.7:
+                het = (not roh) and rng.random() < 0.8
+                gts.append("0/1" if het else "1/1")
+            else:
+                gts.append("0/0")
+        if all(g == "0/0" for g in gts):
+            gts[0] = "0/1"
+        rows.append(f"1\t{10_000 + i * 50}\t.\tA\tG\t99\tPASS\t.\tGT\t" + "\t".join(gts) + "\n")
+    for i in range(700):
+        gts = []
+        for s in TWO_FAMILIES:
+            # Family B: females (B1, B2, B3) het-rich, males (B4, B5) low.
+            # Family A: all three look male by chrX het.
+            p_het = 0.6 if s in ("B1", "B2", "B3") else 0.1
+            gts.append("0/1" if rng.random() < p_het else "1/1")
+        pos = 60_000_000 + i * 1000
+        rows.append(f"X\t{pos}\t.\tA\tG\t99\tPASS\t.\tGT\t" + "\t".join(gts) + "\n")
+    vcf = tmp_path / "two.vcf"
+    vcf.write_text("".join(rows))
+    ped = tmp_path / "two.ped"
+    lines = [f"A\t{s}\t0\t0\t2\t1" for s in FAM_A]  # all declared female
+    lines += [f"B\t{s}\t0\t0\t{'2' if s in ('B1', 'B2', 'B3') else '1'}\t1" for s in FAM_B]
+    ped.write_text("\n".join(lines) + "\n")
+    return check_identity(load_cohort([vcf]), ped=read_ped(ped), cfg=IdentityConfig())
+
+
+def test_a_family_member_is_compared_with_other_families_not_her_relatives(tmp_path):
+    res = _two_family_result(tmp_path)
+    hit = next(f for f in res.findings if f.code == "SEX_MISMATCH" and f.subjects == ["A_ROHF"])
+    ev = hit.evidence
+    assert ev["autosomal_comparison_group"] == "samples from other families"
+    # family B is normal (~0.8); her relatives are not in the comparison
+    assert ev["cohort_median_autosomal_het_frac"] > 0.7
+    assert ev["autosomal_het_frac"] < 0.6
+    assert "other families" in hit.message
+    assert "weaken this" not in hit.message
+
+
+def test_with_no_other_families_the_message_says_relatives_weaken_the_comparison(tmp_path):
+    res = _result(tmp_path)  # single family
+    hit = next(f for f in res.findings if f.code == "SEX_MISMATCH")
+    assert hit.evidence["autosomal_comparison_group"].startswith("all other samples")
+    assert "weaken this" in hit.message
