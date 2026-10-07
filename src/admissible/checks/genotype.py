@@ -160,6 +160,42 @@ def _pl_list(cell: dict[str, str]) -> list[int] | None:
     return [int(round(v - floor)) for v in out]
 
 
+def _gt_index(i: int, j: int) -> int:
+    """Position of genotype i/j (i <= j) in a VCF PL/GL list."""
+    return j * (j + 1) // 2 + i
+
+
+def hom_alt_het_margin(pl: list[int], allele: int) -> int | None:
+    """How far behind the called ``allele/allele`` the nearest het is, in PL units.
+
+    The competitors of a homozygous-alternate call are the genotypes that carry the
+    called allele only once: ``0/allele`` and, at a multiallelic site, ``j/allele``
+    for every other alt ``j``. The PL list is ordered 0/0, 0/1, 1/1, 0/2, 1/2, 2/2,
+    ..., so ``PL[1]`` is the right comparison only for allele 1; for a ``2/2`` call
+    it is the likelihood of a genotype that does not contain allele 2 at all, which
+    is how a contradicted ``2/2`` used to pass.
+
+    Measured from the called genotype's own PL rather than from zero, so a call
+    that is not even the most likely genotype scores worse, not better.
+    Returns None when the list is too short to hold the genotypes needed.
+    """
+    called = _gt_index(allele, allele)
+    if called >= len(pl):
+        return None
+    competitors = []
+    for j in range(0, allele):
+        competitors.append(_gt_index(j, allele))
+    # genotypes allele/k for k > allele sit after the called one in the list
+    k = allele + 1
+    while _gt_index(allele, k) < len(pl):
+        competitors.append(_gt_index(allele, k))
+        k += 1
+    competitors = [c for c in competitors if c < len(pl)]
+    if not competitors:
+        return None
+    return min(pl[c] for c in competitors) - pl[called]
+
+
 def evaluate_genotype(
     gt: str,
     cell: dict[str, str],
@@ -228,8 +264,9 @@ def evaluate_genotype(
             flags.append("HOM_NOT_ASSESSABLE")
         pl_het = None
         if pl and len(pl) >= 2:
-            pl_het = pl[1]
-            ev["PL_het"] = pl_het
+            pl_het = hom_alt_het_margin(pl, int(alleles[0]))
+            if pl_het is not None:
+                ev["PL_het"] = pl_het
         if dp is not None and dp < cfg.hom_min_depth:
             flags.append("LOW_DEPTH_HOM")
         if pl_het is not None and pl_het < cfg.min_pl_het_margin:

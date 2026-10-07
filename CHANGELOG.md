@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`HOM_CONTRADICTED_BY_LIKELIHOOD` compared a homozygous-alt call with the wrong
+  genotype at multiallelic sites.** The check always read `PL[1]` (the `0/1`
+  likelihood). In the VCF's PL order (`0/0, 0/1, 1/1, 0/2, 1/2, 2/2, ...`) that is
+  only the right comparison for allele 1; for a `2/2` call it is a genotype with no
+  allele 2 in it, so a `2/2` whose `0/2` was nearly as likely passed. It now takes the
+  nearest genotype carrying the called allele once (`0/k`, and `j/k` for the other
+  alts), measured from the called genotype's own PL. Biallelic sites are unchanged.
+  On CEPH 1463 it raises the likelihood flag from 335 to 370 calls and the suspect
+  homozygous total from 391 to 412.
+
 ## [0.1.1] — unreleased
 
 Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
