@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from admissible.checks.identity import check_identity
-from admissible.model import Status
+from admissible.model import Severity, Status
 from admissible.ped import read_ped
 from admissible.vcfio import load_cohort
 
@@ -49,11 +49,43 @@ def result():
     return check_identity(load_cohort([VCF]), read_ped(FULL_PED))
 
 
-def test_the_correct_pedigree_is_accepted(result):
-    """No false positives on a real, correct, three-generation pedigree."""
-    assert result.status is Status.PASS, result.summary
+def test_the_correct_pedigree_has_no_kinship_or_sex_false_positives(result):
+    """No kinship-based or sex-based false positives on the published pedigree."""
     assert not [f for f in result.findings if f.code == "PEDIGREE_MISMATCH"]
     assert not [f for f in result.findings if f.code == "SEX_MISMATCH"]
+
+
+def test_parent_offspring_ibs0_check_on_the_full_published_pedigree(result):
+    """0.1.1 added an IBS0 check that separates a parent from a sibling.
+
+    This VCF disagrees with the published pedigree for 7 declared
+    parent-offspring pairs. NA12877 with 6 of his 11 declared children
+    (NA12882/3/4/6/8, NA12893) and NA12889 with NA12877 each have sibling-like
+    IBS0 (0.023-0.033 per het call, against at most 0.0008 for the 12 pairs that
+    do look like parent and child), and kinship alone cannot see this because a
+    parent and a sibling are both 0.25.
+
+    Whether the fault is in the pedigree or in this extract is not known. What is
+    known is that peddy's own ``ceph1463.good.ped`` keeps only NA12877's children
+    NA12879 and NA12880, which are among the pairs that do behave like children.
+    The assertion pins the exact set so a change in behaviour is noticed either
+    way, and the pedigree is not asserted to be clean.
+    """
+    flagged = {
+        frozenset(f.subjects)
+        for f in result.findings
+        if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"
+    }
+    assert flagged == {
+        frozenset({"NA12877", c})
+        for c in ("NA12882", "NA12883", "NA12884", "NA12886", "NA12888", "NA12893", "NA12889")
+    }
+
+
+def test_the_good_subset_of_the_pedigree_is_accepted():
+    res = check_identity(load_cohort([VCF]), read_ped(GOOD_PED))
+    assert res.status is Status.WARN or res.status is Status.PASS
+    assert not [f for f in res.findings if f.severity is Severity.BLOCKING]
 
 
 def test_every_sex_call_matches_the_published_pedigree(result):

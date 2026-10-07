@@ -55,6 +55,14 @@ class IdentityConfig:
     min_x_sites: int = 50
     min_shared_sites: int = 500
     min_informative_sites: int = 2000
+    # A declared parent-offspring pair must have essentially no IBS0 sites, so
+    # kinship alone (0.25 for parent-offspring AND for full sibs) cannot tell a
+    # parent from a sibling. On CEPH 1463 (about 20k sites per pair) true
+    # parent-offspring pairs reached at most 0.0008 IBS0 per het call and
+    # full sibs were at least 0.0145. 0.005 sits between them; the count floor
+    # stops a handful of genotyping errors from tripping it.
+    parent_ibs0_max: float = 0.005
+    parent_ibs0_min_count: int = 20
     # A pair is a duplicate candidate at or above both of these.  Agreement is
     # the discriminating term: no true relative reaches ~0.95 concordance at
     # shared non-reference sites, because sibs and parent-offspring pairs
@@ -140,8 +148,23 @@ class PairEvidence:
     n_informative: int = 0
     king_phi: float | None = None
     ibs0_rate: float | None = None
+    n_ibs0: int | None = None
+    n_het_total: int | None = None
     n_nonref_a: int = 0
     n_nonref_b: int = 0
+
+    @property
+    def ibs0_per_het(self) -> float | None:
+        """IBS0 sites per heterozygous call across the pair.
+
+        About 0 for a true parent and child (they share an allele at every
+        site), and clearly above 0 for siblings and more distant relatives.
+        Scaling by heterozygous calls rather than by all sites keeps it
+        comparable between exomes with different numbers of assessed sites.
+        """
+        if self.n_ibs0 is None or not self.n_het_total:
+            return None
+        return self.n_ibs0 / self.n_het_total
 
     @property
     def king_band(self) -> str | None:
@@ -170,6 +193,8 @@ class PairEvidence:
                 "king_robust_phi": self.king_phi,
                 "king_band": self.king_band,
                 "ibs0_rate": self.ibs0_rate,
+                "n_ibs0": self.n_ibs0,
+                "ibs0_per_het": self.ibs0_per_het,
             }
         return d
 
@@ -316,6 +341,8 @@ def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[P
                 denom = n_het_i + n_het_j
                 ev.king_phi = ((n_hethet - 2 * n_ibs0) / denom) if denom else None
                 ev.ibs0_rate = (n_ibs0 / ev.n_informative) if ev.n_informative else None
+                ev.n_ibs0 = n_ibs0
+                ev.n_het_total = denom
             out.append(ev)
     return out
 
@@ -838,6 +865,49 @@ def check_identity(
             distant_but_looks_close = (
                 expected <= cfg.unrelated_max and observed >= cfg.first_degree_min
             )
+            if declared is Relationship.PARENT_OFFSPRING and not (
+                close_but_looks_distant or distant_but_looks_close
+            ):
+                per_het = ev.ibs0_per_het
+                if (
+                    per_het is not None
+                    and ev.n_ibs0 is not None
+                    and ev.n_ibs0 >= cfg.parent_ibs0_min_count
+                    and per_het > cfg.parent_ibs0_max
+                ):
+                    n_ped_mismatch += 1
+                    findings.append(
+                        Finding(
+                            code="PARENT_OFFSPRING_NOT_SUPPORTED",
+                            severity=Severity.BLOCKING,
+                            message=(
+                                f"{ev.a}/{ev.b}: the pedigree declares parent and child, "
+                                f"but the genotypes do not support it. Kinship "
+                                f"(phi={observed:.4f}) is first-degree-sized, yet they "
+                                f"have {ev.n_ibs0} IBS0 sites ({per_het:.4f} per het "
+                                f"call; a true parent and child have almost none, above "
+                                f"{cfg.parent_ibs0_max} is sibling- or "
+                                f"second-degree-like). Check whether one of them is a "
+                                f"sibling, or a more distant relative, of the other"
+                            ),
+                            subjects=[ev.a, ev.b],
+                            evidence=ev.to_dict()
+                            | {
+                                "declared_relationship": declared.value,
+                                "expected_kinship": expected,
+                                "observed_kinship": observed,
+                                "ibs0_per_het_max": cfg.parent_ibs0_max,
+                                "do_not_conclude": (
+                                    "any segregation result computed on this pedigree"
+                                ),
+                                "next_steps": [
+                                    "re-check the parent-child links for this pair "
+                                    "against the sample sheet (blocking)"
+                                ],
+                            },
+                        )
+                    )
+                continue
             if not (close_but_looks_distant or distant_but_looks_close):
                 continue
 

@@ -23,6 +23,24 @@ here when this is tagged.)
   pipelines gives similar-sized call sets with low Jaccard (synthetic: agreement
   1.000, Jaccard 0.54) and was still missed. The ratio now only chooses which
   explanation the message offers.
+- **A PED header naming parents `dad_id` / `mom_id` silently lost every parent
+  link.** Parent columns were matched against a fixed list that lacked those
+  spellings, so every sample was read as a founder and relationship checks ran
+  against a pedigree with no relationships in it. A trailing `id` is now accepted on
+  any listed spelling, and a header with no recognisable father or mother column
+  now warns that parent links are lost. (Found by running peddy's
+  `ceph1463.bad.ped`, which uses those headers.)
+- **A sibling declared as a parent was not caught.** Kinship is 0.25 for both, so
+  the kinship comparison cannot tell them apart. New BLOCKING
+  `PARENT_OFFSPRING_NOT_SUPPORTED` fires for a declared parent-offspring pair with
+  at least 20 IBS0 sites and more than 0.005 IBS0 per heterozygous call (a true
+  parent and child have almost none). On CEPH 1463, true parent-offspring pairs were
+  at most 0.0008 and full sibs at least 0.0145. **This changes a 0.1.0 result:** on
+  the full published CEPH 1463 pedigree with peddy's VCF it flags 7 declared
+  parent-offspring pairs (NA12877 with NA12882, NA12883, NA12884, NA12886, NA12888,
+  NA12893, and NA12889 with NA12877), which have sibling-like IBS0 in that file. The
+  cause (pedigree or this extract) is not established. peddy's own
+  `ceph1463.good.ped` keeps only two of those children and passes.
 - **Pairs with under 500 shared sites were skipped silently.** New INFO
   `DUPLICATE_CHECK_SKIPPED` states how many pairs were not examined, so a clean
   result is not read as covering them.
@@ -72,6 +90,9 @@ here when this is tagged.)
   to 0.45; females with depressed chrX heterozygosity (consanguinity, long runs of
   homozygosity) can then be called male. Borderline calls should be verified.
   Hardening this changes calls, so it is planned for 0.2.0.
+- The parent-offspring IBS0 check only looks at pairs the pedigree declares as
+  parent and child. It does not yet catch the reverse (siblings declared, a parent
+  and child in fact) and has not been tested on consanguineous families.
 - The duplicate thresholds (agreement 0.95, Jaccard 0.60, 500 shared sites) are
   conventions, not derived values. On real CEPH 1463 data the highest non-duplicate
   agreement was 0.826.
