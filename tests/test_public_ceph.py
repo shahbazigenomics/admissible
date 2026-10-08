@@ -55,31 +55,41 @@ def test_the_correct_pedigree_has_no_kinship_or_sex_false_positives(result):
     assert not [f for f in result.findings if f.code == "SEX_MISMATCH"]
 
 
-def test_parent_offspring_ibs0_check_on_the_full_published_pedigree(result):
-    """0.1.1 added an IBS0 check that separates a parent from a sibling.
+def test_the_full_published_pedigree_is_accepted_with_no_finding(result):
+    """The published pedigree and this extract agree, so nothing is flagged.
 
-    This VCF disagrees with the published pedigree for 7 declared
-    parent-offspring pairs. NA12877 with 6 of his 11 declared children
-    (NA12882/3/4/6/8, NA12893) and NA12889 with NA12877 each have sibling-like
-    IBS0 (0.023-0.033 per het call, against at most 0.0008 for the 12 pairs that
-    do look like parent and child), and kinship alone cannot see this because a
-    parent and a sibling are both 0.25.
-
-    Whether the fault is in the pedigree or in this extract is not known. What is
-    known is that peddy's own ``ceph1463.good.ped`` keeps only NA12877's children
-    NA12879 and NA12880, which are among the pairs that do behave like children.
-    The assertion pins the exact set so a change in behaviour is noticed either
-    way, and the pedigree is not asserted to be clean.
+    Until 0.1.1 this test pinned 7 PARENT_OFFSPRING_NOT_SUPPORTED findings and the
+    docstring said the cause was unknown. It was ours: pairwise IBS0 and kinship
+    included non-PAR chrX, and a father and his son share no X. Ali's validation
+    suspected chrX; removing it took those 7 pairs from 352-501 IBS0 sites to at
+    most 5. See ``test_father_son_pairs_look_like_parent_and_child``.
     """
-    flagged = {
-        frozenset(f.subjects)
-        for f in result.findings
-        if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"
+    assert not [f for f in result.findings if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"]
+    assert not [f for f in result.findings if f.severity is Severity.BLOCKING]
+
+
+def _father_son_pairs():
+    ped = read_ped(FULL_PED)
+    male = {n for n, i in ped.individuals.items() if i.sex.value == "male"}
+    return {
+        frozenset((i.father, n))
+        for n, i in ped.individuals.items()
+        if n in male and i.father in male
     }
-    assert flagged == {
-        frozenset({"NA12877", c})
-        for c in ("NA12882", "NA12883", "NA12884", "NA12886", "NA12888", "NA12893", "NA12889")
-    }
+
+
+def test_father_son_pairs_look_like_parent_and_child(result):
+    """The 7 pairs that the X chromosome used to turn into false BLOCKING findings."""
+    wanted = _father_son_pairs()
+    assert len(wanted) == 7
+    seen = 0
+    for p in result.metrics["pairs"]:
+        if frozenset((p["a"], p["b"])) not in wanted:
+            continue
+        seen += 1
+        assert p["n_ibs0"] <= 10, p  # was 352-501 with chrX included
+        assert 0.20 < p["king_robust_phi"] < 0.30, p  # was 0.188-0.209
+    assert seen == 7
 
 
 def test_the_good_subset_of_the_pedigree_is_accepted():
@@ -125,20 +135,23 @@ def test_first_degree_pairs_are_always_recognised(result):
     assert min(first) > 0.0884  # comfortably above the unrelated band
 
 
-def test_second_degree_is_correct_on_average_but_not_per_pair(result):
-    """A real limitation, asserted rather than hidden.
+def test_second_degree_is_unbiased_and_separable_on_this_family(result):
+    """Grandparent-grandchild pairs average the textbook 0.125.
 
-    Grandparent-grandchild pairs average the textbook 0.125, but at ~20k sites
-    the weakest of them falls below the unrelated band floor. Second-degree
-    relatedness cannot be called reliably for an individual pair at this site
-    count - which is precisely why the reconciliation rule refuses to report
-    first-vs-second-degree discrepancies as pedigree errors.
+    Before 0.1.1 this test documented a "failure mode": the weakest second-degree
+    pair fell below the unrelated band and the mean was 0.109. Part of that was
+    chrX, which depresses kinship for male-male pairs. With autosomes only the
+    mean is 0.126 and the weakest pair is 0.084, above the unrelated band.
+
+    That is one family at ~19k autosomal sites. It does not show that second
+    degree can be called per pair in general, and the reconciliation rule still
+    refuses to report first-vs-second-degree discrepancies as pedigree errors.
     """
     second = _by_expected_kinship(result)[0.125]
     assert len(second) >= 20
-    assert sum(second) / len(second) == pytest.approx(0.125, abs=0.03)
-    assert min(second) < 0.0442  # documents the failure mode
-    assert sum(p > 0.0442 for p in second) / len(second) > 0.85
+    assert sum(second) / len(second) == pytest.approx(0.125, abs=0.015)
+    assert min(second) > 0.0442
+
 
 
 def test_the_corrupted_pedigree_is_caught():

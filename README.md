@@ -258,27 +258,30 @@ its own canonical failure case.
 |---|---|
 | sex calls vs the published pedigree | 16 called, **0 wrong**; 1 returned *undetermined* at the boundary rather than guessed |
 | truly unrelated pairs called related | **0 of 11** |
-| first-degree pairs recognised as related | **all**, minimum φ 0.153 |
+| first-degree pairs recognised as related | **all**, minimum φ 0.183 |
 | false duplicate pairs across 136 comparisons | **0** |
-| the published pedigree, kinship and sex | no false positives |
-| the published pedigree, parent-offspring IBS0 check (added in 0.1.1) | flags 7 declared parent-child pairs whose genotypes look like siblings (NA12877 with 6 of his children, and NA12889 with NA12877); whether the pedigree or this extract is at fault is not established. peddy's own reduced `good.ped` passes |
+| the published pedigree, kinship, sex and parent-offspring IBS0 | no findings. The 7 father-son pairs have at most 5 IBS0 sites and φ 0.245-0.255 (autosomes only; with chrX included they looked like siblings, 352-501 IBS0 sites) |
 | peddy's corrupted pedigree (father/daughter swapped) | caught, both swapped samples named |
 
 Two things this exposed that the synthetic fixtures could not, both now
 reflected in the code:
 
-**Band-label comparison is brittle.** True full sibs in this family come out at
-φ 0.153 and 0.176, just under the 0.177 first-degree boundary — realised IBD
-genuinely varies between sibs. An earlier version compared band *labels* and
-reported both as pedigree errors. Reconciliation now compares the observed
-kinship to the kinship the pedigree *implies*, computed recursively, and flags
-only discrepancies too large to be noise. It deliberately says nothing about
-first-vs-second degree.
+**Band-label comparison is brittle.** Full sibs in this family range from φ 0.183
+to 0.307, so the weakest sits 0.006 above the 0.177 first-degree boundary:
+realised IBD varies between sibs, and a label comparison would be one bad draw
+from a false pedigree error. (An earlier version did report two sibs as errors,
+at 0.153 and 0.176. Those values were computed with chrX included, which is now
+known to bias kinship down for male pairs, so part of that was the X chromosome,
+not IBD variance.) Reconciliation compares the observed kinship to the kinship
+the pedigree *implies*, computed recursively, and flags only discrepancies too
+large to be noise. It deliberately says nothing about first-vs-second degree.
 
-**Second-degree relatedness is not reliable per pair at this site count.**
-Grandparent–grandchild pairs average the textbook 0.125, but the weakest falls
-below the unrelated band floor. The tool reports the informative-site count and
-says so, rather than implying a precision it does not have.
+**Second-degree relatedness is marginal per pair at this site count.**
+Grandparent–grandchild pairs average 0.126 against the textbook 0.125, and on
+this family even the weakest (0.084) is above the unrelated band, but it is below
+the 0.0884 second-degree floor, and this is one family at ~19k autosomal sites.
+The tool reports the informative-site count and does not claim a per-pair degree
+it cannot support.
 
 Running checks 2 and 5 on the same file found two defects that the synthetic
 fixtures could not, because a fixture written alongside the code inherits the

@@ -1,5 +1,5 @@
-"""Regression tests for three gaps found auditing a real 13-sample, 3-family
-familial-IBD WES cohort mixing native VCFs and ANNOVAR multianno tables (see
+"""Regression tests for three gaps found auditing a real multi-family
+WES cohort mixing native VCFs and ANNOVAR multianno tables (see
 ``admissible_improvement_prompt.md``):
 
 1. The duplicate-pair AND-gate (``agreement >= dup_agreement AND jaccard >=

@@ -404,9 +404,40 @@ def _calibrate_sex_boundary(fracs: list[float], cfg: IdentityConfig, notes: list
     return cfg.default_sex_boundary
 
 
+def autosomal_site_ids(matrix: GenotypeMatrix) -> set[int]:
+    """Site ids on chromosomes 1-22.
+
+    KING-robust kinship and IBS0 assume diploid, biallelic-in-the-population
+    genotypes. Non-PAR chrX, chrY and the mitochondrion are haploid in at least
+    one sex, so a hemizygous male is written hom-ref or hom-alt there. Two males
+    who share no X (a father and his son: the son's X is his mother's) then
+    differ at about a third of their X sites, which reads as a flood of IBS0 and
+    pulls kinship down. That is not relatedness, so pairwise statistics use
+    autosomes only. The duplicate check keeps every site: an identical sample
+    is identical everywhere, and there the extra sites only help.
+    """
+    out: set[int] = set()
+    for site_id, key in enumerate(matrix.index.keys):
+        c = normalize_contig(key[0])
+        if c.isdigit() and 1 <= int(c) <= 22:
+            out.add(site_id)
+    return out
+
+
 def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[PairEvidence]:
     out: list[PairEvidence] = []
     names = matrix.samples
+    auto = autosomal_site_ids(matrix)
+    # Restricted views, built once per sample rather than once per pair.
+    auto_sets = {
+        n: SampleSets(
+            assessed=sets[n].assessed & auto,
+            het=sets[n].het & auto,
+            homalt=sets[n].homalt & auto,
+            homref=sets[n].homref & auto,
+        )
+        for n in names
+    }
     for i, a in enumerate(names):
         for b in names[i + 1 :]:
             sa, sb = sets[a], sets[b]
@@ -427,12 +458,13 @@ def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[P
                 n_nonref_b=len(nr_b),
             )
             if ev.dense:
-                inform = sa.assessed & sb.assessed
+                ua, ub = auto_sets[a], auto_sets[b]
+                inform = ua.assessed & ub.assessed
                 ev.n_informative = len(inform)
-                n_het_i = len(sa.het & sb.assessed)
-                n_het_j = len(sb.het & sa.assessed)
-                n_hethet = len(sa.het & sb.het)
-                n_ibs0 = len(sa.homalt & sb.homref) + len(sb.homalt & sa.homref)
+                n_het_i = len(ua.het & ub.assessed)
+                n_het_j = len(ub.het & ua.assessed)
+                n_hethet = len(ua.het & ub.het)
+                n_ibs0 = len(ua.homalt & ub.homref) + len(ub.homalt & ua.homref)
                 denom = n_het_i + n_het_j
                 ev.king_phi = ((n_hethet - 2 * n_ibs0) / denom) if denom else None
                 ev.ibs0_rate = (n_ibs0 / ev.n_informative) if ev.n_informative else None

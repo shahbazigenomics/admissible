@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [0.1.1] — unreleased
 
 Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
-real 13-sample, 3-family familial-IBD WES cohort. **Everyone installing from PyPI
+a real multi-family WES cohort. **Everyone installing from PyPI
 before this release has 0.1.0, which lacks all of them.** (Set the release date
 here when this is tagged.)
 
@@ -36,11 +36,23 @@ here when this is tagged.)
   at least 20 IBS0 sites and more than 0.005 IBS0 per heterozygous call (a true
   parent and child have almost none). On CEPH 1463, true parent-offspring pairs were
   at most 0.0008 and full sibs at least 0.0145. **This changes a 0.1.0 result:** on
-  the full published CEPH 1463 pedigree with peddy's VCF it flags 7 declared
-  parent-offspring pairs (NA12877 with NA12882, NA12883, NA12884, NA12886, NA12888,
-  NA12893, and NA12889 with NA12877), which have sibling-like IBS0 in that file. The
-  cause (pedigree or this extract) is not established. peddy's own
-  `ceph1463.good.ped` keeps only two of those children and passes.
+  the full published CEPH 1463 pedigree with peddy's VCF it first flagged 7 declared
+  parent-offspring pairs, which turned out to be a bug in the pairwise statistics
+  (next item), not a pedigree or extract fault.
+- **Father-son pairs looked like siblings: pairwise kinship and IBS0 included
+  non-PAR chrX.** A son's X is his mother's, so a father and son share none, and
+  hemizygous males written hom-ref / hom-alt disagree at those sites; each
+  disagreement is an IBS0 site. On CEPH 1463 all 7 pairs the new IBS0 check flagged
+  were father-son (NA12877 with six sons, NA12889 with NA12877): 352-501 IBS0 sites
+  and kinship 0.19-0.21, against at most 5 sites and 0.245-0.255 once chrX is
+  excluded. Pairwise KING-robust kinship and IBS0 now use chromosomes 1-22 only
+  (chrX, chrY and chrM are haploid in at least one sex). The same bias had lowered
+  male-male kinship generally: unrelated pairs ranged -0.045..0.008 and are now
+  -0.013..0.007, and second-degree pairs averaged 0.109 and now average 0.126
+  (expected 0.125). The duplicate check still uses every site. Found by Ali's
+  validation; an earlier note in this section that the cause was "not established"
+  was wrong. Costs about 5% of sites in an exome (chrX), so kinship is slightly
+  less precise.
 - **Pairs with under 500 shared sites were skipped silently.** New INFO
   `DUPLICATE_CHECK_SKIPPED` states how many pairs were not examined, so a clean
   result is not read as covering them.
