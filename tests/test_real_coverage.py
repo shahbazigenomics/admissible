@@ -77,4 +77,6 @@ def test_a_third_of_the_target_forbids_the_negative_claim(result):
     assert result.status is Status.FAIL
     f = next(x for x in result.findings if x.code == "CALLABILITY_EXPLORATORY")
     assert f.evidence["do_not_conclude"] == "no monogenic cause"
-    assert "cannot be excluded" in f.evidence["permitted_claim"]
+    assert f.evidence["claim_rung"] == "EXPLORATORY"
+    assert "was not searched" in f.evidence["permitted_claim"]
+    assert "excluded" not in f.evidence["permitted_claim"]

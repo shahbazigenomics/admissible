@@ -3,9 +3,73 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — unreleased
+
+Check 4 (callability) only. Identity, provenance, genotype and models behave as in
+0.1.1. **This changes check 4's numbers, status and `models` output for any run
+with a pedigree that has parents**, and drops a configuration field; read
+"Changed" before upgrading a consumer.
+
+### Fixed
+
+- **A configured threshold changed the severity but not the claim.** `claim_for`
+  read a fixed ladder and ignored `CallabilityConfig`, so with `strong=0.95,
+  weak=0.90` an 85% fraction produced a BLOCKING `CALLABILITY_EXPLORATORY` finding
+  whose own `permitted_claim` said "monogenic cause excluded for the models
+  tested". The claim now follows the configured thresholds.
+- **A corrupt gzip crashed the BED reader.** A gzip with a valid header and a
+  corrupt body raises `zlib.error`, which is not an `OSError`, and `read_bed` let it
+  through. It is now reported as a problem like the other read failures.
+  (`load_cohort` has the same flaw for VCFs and is not changed here.)
+
+### Changed
+
+- **The claim never says "excluded".** At 0.80 or above the 0.1.1 text was
+  "monogenic cause excluded for the models tested", which is not supported by a
+  depth-only search with 20% unsearched and no structural-variant detection. The
+  three rungs now say what was searched, e.g. "no candidate identified in the
+  searched portion; 5.0% of the target was not searched". New `claim_rung`
+  (`SEARCHED_MOST`, `SEARCHED_PARTLY`, `EXPLORATORY`, `UNKNOWN`) is the stable
+  field to branch on; the wording may change. `CLAIM_LADDER` is removed.
+- **Each model's fraction is over every sample the model needs, not just the
+  affected ones.** Recessive, compound-het, dominant and both X-linked models need
+  the affected samples and their parents; phenocopy(n-1) needs all but one affected
+  and the parents; de-novo needs one complete trio, as a union over affected
+  children; dominant-reduced-penetrance and mitochondrial need the affected only.
+  A required sample with no coverage file makes that model `UNKNOWN` (fraction
+  `None`, `claim_rung` `UNKNOWN`, with a `reason` and `missing_coverage`); it is no
+  longer dropped from the intersection, which raised the fraction. New WARN
+  `MODEL_REQUIRED_SAMPLE_WITHOUT_COVERAGE`, and INFO `MODEL_REQUIREMENTS_UNDEFINED`
+  where the pedigree cannot define the set (for example de-novo with no trio).
+- **The headline is the strictest assessable model.** New `gating_model` and
+  `gating_fraction`; status and the `CALLABILITY_*` finding are taken from it. The
+  affected-only `joint_callable_fraction` is kept. Status cannot be PASS while a
+  model is UNKNOWN for want of a coverage file; a model the pedigree cannot define
+  does not block PASS.
+- **`models` entries gain** `status`, `required_samples`, `missing_coverage`,
+  `lower_bound`, `reason`, `notes`, `claim_rung`. `fraction_of_target`,
+  `permitted_claim`, `callable_bp` and `samples_required` keep their names;
+  `samples_required` now means the minimum number of the listed samples that must be
+  callable at a position. `dominant-reduced-penetrance` now has an entry, so check 5
+  shows a callable fraction for it where it showed none.
+- **`per_sample` includes every pedigree sample with coverage**, with a `role`
+  (`affected` or `relative`). Coverage that no model needs is noted.
+- `CallabilityConfig.full_penetrance_models` is replaced by
+  `with_parents_models`, `affected_only_models` and `trio_model`.
+- New library functions `intervals.subtract` and `intervals.read_named_bed`; nothing
+  uses them yet.
+
+### Known limitations
+
+- Unaffected relatives other than the parents are not required, although check 5
+  drops sites where they were unobserved, so the share can exceed what check 5 could
+  verify when the pedigree has unaffected siblings.
+- Depth-based callability is blind to heterozygous deletions and other structural
+  variants. Stated beside the claim in the README and in every finding's `limits`.
+
 ## [0.1.1] — unreleased
 
-Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
+Fixes found after 0.1.0 by an AI adversarial review and by running the tool on
 a real multi-family WES cohort. **Everyone installing from PyPI
 before this release has 0.1.0, which lacks all of them.** (Set the release date
 here when this is tagged.)
