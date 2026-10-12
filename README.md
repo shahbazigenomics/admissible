@@ -366,6 +366,25 @@ pedigree the share can exceed what check 5 could verify.
 The headline `gating_fraction` is the strictest model that could be assessed.
 `joint_callable_fraction` is still reported and is the affected-only intersection.
 
+### One sample, a family, or a cohort
+
+Check 4 judges each **analysis unit** separately and takes the worst as the headline,
+because a pooled number answers a question nobody asked: a 12-case cohort whose cases
+are unrelated is not one recessive hypothesis needing all 12 callable at once.
+
+| input | units |
+|---|---|
+| PED with families | one unit per family that has an affected member |
+| `--independent` | one unit per sample; pedigree structure is ignored |
+| no PED, no `--independent` | one pooled group (the safe reading of a real family supplied without a PED); a note points at `--independent` |
+
+`--affected-only` drops the parents from every model's required set, for a proband
+whose parents were not sequenced. De novo is then undefined (it needs the trio) and
+is reported as such, not as missing coverage. The headline is the worst unit's
+strictest assessable model, and the worst unit is named in the summary. The pooled
+per-model numbers stay in `models`, because check 5 pools all affected samples
+across families. Per-unit detail is in `units`; the cohort roll-up is in `cohort`.
+
 ### Real capture coverage
 
 Check 4's central claim — that the joint callable fraction is an intersection and

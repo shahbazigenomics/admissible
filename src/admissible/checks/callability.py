@@ -50,6 +50,7 @@ from ..intervals import (
 )
 from ..model import CheckResult, Finding, Severity, Status, never_raises, unknown
 from ..ped import Pedigree
+from ..stats import median
 
 CHECK = "callability"
 
@@ -91,6 +92,14 @@ class CallabilityConfig:
         "mitochondrial",
     )
     trio_model: str = "de-novo"
+    # Require the affected samples' parents to be callable too (the default, and
+    # the safe reading for a family). False describes a proband-only or
+    # affected-only search: the parents are not sequenced, or not part of the
+    # analysis, and the fraction says so.
+    require_relatives: bool = True
+    # Treat every sample as an independent case: its own analysis unit, with no
+    # relatives. For a cohort of unrelated people, or several singletons.
+    independent: bool = False
     # All but one affected sample, plus the parents.
     phenocopy_model: str = "phenocopy(n-1)"
 
@@ -274,6 +283,12 @@ def resolve_requirements(
             else:
                 no_parent_notes.append(f"{a} has no {who} in the pedigree")
     parents = [p for p in _dedupe(parents) if p not in affected]
+    if not cfg.require_relatives:
+        parents = []
+        no_parent_notes = [
+            "relatives are not required (affected-only mode): the fraction describes "
+            "a search over the affected samples alone"
+        ]
 
     out: dict[str, ModelRequirement] = {}
 
@@ -290,7 +305,10 @@ def resolve_requirements(
     for name in cfg.with_parents_models:
         req = need(name, _dedupe(affected + parents))
         if no_parent_notes:
-            req.notes.append("; ".join(no_parent_notes) + " (so they could not be required)")
+            req.notes.append(
+                "; ".join(no_parent_notes)
+                + ("" if not cfg.require_relatives else " (so they could not be required)")
+            )
         out[name] = req
     for name in cfg.affected_only_models:
         out[name] = need(name, list(affected))
@@ -304,7 +322,12 @@ def resolve_requirements(
         and individuals[a].mother in individuals
     ]
     dn = ModelRequirement(model=cfg.trio_model, min_samples=3)
-    if not trios:
+    if not cfg.require_relatives:
+        dn.unresolved = (
+            "de novo needs a child and both parents, and affected-only mode does not "
+            "use relatives"
+        )
+    elif not trios:
         dn.unresolved = (
             "no affected sample has both parents in the pedigree, so de novo cannot "
             "be assessed" + (" (no pedigree was supplied)" if not individuals else "")
@@ -384,6 +407,88 @@ def requirement_intervals(
     return result
 
 
+def _analysis_units(
+    ped: Pedigree | None,
+    affected_ped: list[str],
+    labels: list[str],
+    cfg: CallabilityConfig,
+) -> list[tuple[str, str | None, list[str]]]:
+    """The units a claim is made about: ``(unit id, family id, affected samples)``.
+
+    A claim about "the family" and a claim about "this person" are different, and a
+    cohort is many of the second, not one big first. So a unit is one PED family
+    with at least one affected member, or, for independent cases, one sample.
+    With no pedigree and no ``independent`` flag, every sample is one group, which
+    is the safe reading for a real family whose PED was not supplied.
+    """
+    if cfg.independent:
+        members = affected_ped or list(labels)
+        return [(m, None, [m]) for m in members]
+    if ped is not None and affected_ped:
+        by_family: dict[str, list[str]] = {}
+        for a in affected_ped:
+            by_family.setdefault(ped.individuals[a].family_id, []).append(a)
+        return [(fam, fam, members) for fam, members in by_family.items()]
+    return [("all", None, list(labels))]
+
+
+def _model_table(
+    reqs: dict[str, ModelRequirement],
+    cov_sets: dict[str, IntervalSet],
+    fraction_of_target,
+    cfg: CallabilityConfig,
+) -> dict[str, dict]:
+    models: dict[str, dict] = {}
+    for name, req in reqs.items():
+        entry: dict = {
+            "status": "computed" if req.evaluable else "unknown",
+            "samples_required": req.min_samples,
+            "required_samples": req.required,
+            "missing_coverage": req.missing,
+            "lower_bound": req.lower_bound,
+            "relatives_required": cfg.require_relatives,
+            "reason": req.unresolved,
+            "notes": req.notes,
+            "callable_bp": None,
+            "fraction_of_target": None,
+            "permitted_claim": None,
+            "claim_rung": RUNG_UNKNOWN,
+        }
+        if req.evaluable:
+            m_bp, m_frac = fraction_of_target(requirement_intervals(req, cov_sets))
+            entry["callable_bp"] = m_bp
+            entry["fraction_of_target"] = m_frac
+            if m_frac is not None:
+                entry["permitted_claim"] = claim_for(m_frac, cfg)
+                entry["claim_rung"] = claim_rung_for(m_frac, cfg)
+        models[name] = entry
+    return models
+
+
+def _unit_summary(
+    unit_id: str, family: str | None, affected: list[str], models: dict[str, dict]
+) -> dict:
+    computed = {m: e for m, e in models.items() if e["fraction_of_target"] is not None}
+    gating_model = gating_fraction = claim = None
+    rung = RUNG_UNKNOWN
+    if computed:
+        gating_model = min(computed, key=lambda m: computed[m]["fraction_of_target"])
+        gating_fraction = computed[gating_model]["fraction_of_target"]
+        claim = computed[gating_model]["permitted_claim"]
+        rung = computed[gating_model]["claim_rung"]
+    return {
+        "unit": unit_id,
+        "family": family,
+        "affected": affected,
+        "status": "computed" if computed else "unknown",
+        "gating_model": gating_model,
+        "gating_fraction": gating_fraction,
+        "claim_rung": rung,
+        "permitted_claim": claim,
+        "models": models,
+    }
+
+
 @never_raises(CHECK)
 def check_callability(
     coverage: list[SampleCoverage] | None = None,
@@ -444,10 +549,11 @@ def check_callability(
                           for c in empty},
         )
 
-    if not affected_set:
+    if not affected_set and not cfg.independent:
         notes_affected = (
             "no pedigree supplied, so every sample with coverage was treated as "
-            "affected; supply a PED to compute this against the right samples"
+            "affected and as one group; supply a PED to compute this against the right "
+            "samples, or pass --independent if they are unrelated cases"
         )
     else:
         notes_affected = ""
@@ -491,36 +597,70 @@ def check_callability(
     joint_bp, joint_frac = fraction_of_target(joint)
 
     # --- per model: the samples it needs, and what that intersection covers ----
-    reqs = resolve_requirements(ped, affected_all, have, cfg)
+    # ``models`` is pooled over every affected sample in the run. It is what check 5
+    # reads, because that sweep also asks "the same variant in all of them".
+    # The CLAIMS are made per analysis unit, below.
+    ped_for_reqs = None if cfg.independent else ped
     cov_sets = {label: c.intervals for label, c in cov_by_label.items()}
-    models: dict[str, dict] = {}
-    for name, req in reqs.items():
-        entry: dict = {
-            "status": "computed" if req.evaluable else "unknown",
-            "samples_required": req.min_samples,
-            "required_samples": req.required,
-            "missing_coverage": req.missing,
-            "lower_bound": req.lower_bound,
-            "reason": req.unresolved,
-            "notes": req.notes,
-            "callable_bp": None,
-            "fraction_of_target": None,
-            "permitted_claim": None,
-            "claim_rung": RUNG_UNKNOWN,
+    reqs = resolve_requirements(ped_for_reqs, affected_all, have, cfg)
+    models = _model_table(reqs, cov_sets, fraction_of_target, cfg)
+
+    unit_defs = _analysis_units(ped, affected_ped, [c.label for c in coverage], cfg)
+    if len(unit_defs) == 1:
+        unit_rows = [_unit_summary(*unit_defs[0], models)]
+    else:
+        unit_rows = [
+            _unit_summary(
+                uid,
+                fam,
+                members,
+                _model_table(
+                    resolve_requirements(ped_for_reqs, members, have, cfg),
+                    cov_sets,
+                    fraction_of_target,
+                    cfg,
+                ),
+            )
+            for uid, fam, members in unit_defs
+        ]
+    multi = len(unit_rows) > 1
+    for label in cov_by_label:
+        if any(label in u["affected"] for u in unit_rows):
+            role[label] = "affected"
+            per_sample[label]["role"] = "affected"
+
+    def _no_cov(table: dict[str, dict]) -> dict[str, dict]:
+        return {
+            m: e for m, e in table.items()
+            if e["status"] == "unknown" and e["missing_coverage"]
         }
-        if req.evaluable:
-            m_bp, m_frac = fraction_of_target(requirement_intervals(req, cov_sets))
-            entry["callable_bp"] = m_bp
-            entry["fraction_of_target"] = m_frac
-            if m_frac is not None:
-                entry["permitted_claim"] = claim_for(m_frac, cfg)
-                entry["claim_rung"] = claim_rung_for(m_frac, cfg)
-        models[name] = entry
+
+    def _undefined(table: dict[str, dict]) -> dict[str, dict]:
+        return {
+            m: e for m, e in table.items()
+            if e["status"] == "unknown" and not e["missing_coverage"]
+        }
+
+    no_cov_by_unit = {u["unit"]: _no_cov(u["models"]) for u in unit_rows}
+    undefined_by_unit = {u["unit"]: _undefined(u["models"]) for u in unit_rows}
+    any_no_cov = any(no_cov_by_unit.values())
 
     findings: list[Finding] = []
     notes: list[str] = []
     if notes_affected:
         notes.append(notes_affected)
+    if cfg.independent:
+        notes.append(
+            f"--independent: {len(unit_rows)} sample(s) were each treated as their own "
+            f"case, with no relatives; a claim holds for one sample at a time, and "
+            f"the pooled figure answers 'the same variant in all of them'"
+        )
+    if not cfg.require_relatives:
+        notes.append(
+            "affected-only mode: relatives were not required, so these fractions "
+            "describe a search over the affected samples alone; a variant could not "
+            "be checked against unaffected relatives at positions they did not cover"
+        )
     notes += target_problems
     for c in cov_by_label.values():
         notes += [f"{c.label}: {p}" for p in c.problems]
@@ -562,36 +702,42 @@ def check_callability(
             )
         )
 
-    no_cov_models = {
-        m: e for m, e in models.items() if e["status"] == "unknown" and e["missing_coverage"]
-    }
-    undefined_models = {
-        m: e for m, e in models.items() if e["status"] == "unknown" and not e["missing_coverage"]
-    }
-    if no_cov_models:
+    if any_no_cov:
+        # model -> samples missing, merged over units; per-unit detail alongside
+        merged: dict[str, list[str]] = {}
+        for table in no_cov_by_unit.values():
+            for m, e in table.items():
+                merged.setdefault(m, [])
+                merged[m] = sorted(set(merged[m]) | set(e["missing_coverage"]))
+        units_with = [u for u, t in no_cov_by_unit.items() if t]
         findings.append(
             Finding(
                 code="MODEL_REQUIRED_SAMPLE_WITHOUT_COVERAGE",
                 severity=Severity.WARN,
                 message=(
-                    f"{len(no_cov_models)} model(s) are UNKNOWN because a sample they need "
-                    f"has no coverage file: "
-                    + "; ".join(
-                        f"{m} needs {', '.join(e['missing_coverage'])}"
-                        for m, e in no_cov_models.items()
-                    )
+                    f"{len(merged)} model(s) are UNKNOWN"
+                    + (f" in {len(units_with)} of {len(unit_rows)} unit(s)" if multi else "")
+                    + " because a sample they need has no coverage file: "
+                    + "; ".join(f"{m} needs {', '.join(v)}" for m, v in merged.items())
                     + ". They are not computed over the samples that do have coverage, "
                     "because that would overstate what was searched"
                 ),
                 evidence={
-                    "models": {m: e["missing_coverage"] for m, e in no_cov_models.items()},
+                    "models": merged,
+                    **({"units": {u: {m: e["missing_coverage"] for m, e in t.items()}
+                                  for u, t in no_cov_by_unit.items() if t}} if multi else {}),
                     "next_steps": [
-                        "supply --coverage LABEL=BED for each sample listed, or accept "
-                        "that these models were not assessed"
+                        "supply --coverage LABEL=BED for each sample listed, or, if the "
+                        "relatives are not sequenced, rerun with --affected-only to "
+                        "describe a search over the affected samples alone"
                     ],
                 },
             )
         )
+    undefined_models: dict[str, str] = {}
+    for table in undefined_by_unit.values():
+        for m, e in table.items():
+            undefined_models.setdefault(m, e["reason"])
     if undefined_models:
         findings.append(
             Finding(
@@ -600,9 +746,9 @@ def check_callability(
                 message=(
                     "the pedigree cannot define which samples these model(s) need, so they "
                     "are UNKNOWN: "
-                    + "; ".join(f"{m} ({e['reason']})" for m, e in undefined_models.items())
+                    + "; ".join(f"{m} ({r})" for m, r in undefined_models.items())
                 ),
-                evidence={"models": {m: e["reason"] for m, e in undefined_models.items()}},
+                evidence={"models": undefined_models},
             )
         )
 
@@ -629,6 +775,13 @@ def check_callability(
         f"conventions wherever this number is reported"
     )
     notes.extend(LIMITS)
+
+    mode = "independent" if cfg.independent else ("family" if ped and affected_set else "pooled")
+    analysis = {
+        "mode": mode,
+        "relatives_required": cfg.require_relatives,
+        "n_units": len(unit_rows),
+    }
 
     if target is None:
         notes.append(
@@ -657,7 +810,8 @@ def check_callability(
                     },
                 )
             ],
-            metrics={"per_sample": per_sample, "joint_callable_bp": joint_bp, "models": models},
+            metrics={"per_sample": per_sample, "joint_callable_bp": joint_bp,
+                     "models": models, "analysis": analysis},
             notes=notes,
         )
 
@@ -669,8 +823,23 @@ def check_callability(
             f"be used as the joint callable fraction."
         )
 
-    computed = {m: e for m, e in models.items() if e["fraction_of_target"] is not None}
-    if not computed:
+    assessable = [u for u in unit_rows if u["gating_fraction"] is not None]
+    by_rung: dict[str, int] = {}
+    for u in unit_rows:
+        by_rung[u["claim_rung"]] = by_rung.get(u["claim_rung"], 0) + 1
+    base_metrics = {
+        "n_affected_with_coverage": n,
+        "target_bp": target_total,
+        "joint_callable_bp": joint_bp,
+        "joint_callable_fraction": joint_frac,
+        "product_of_per_sample_fractions": product if have_all_fractions else None,
+        "per_sample": per_sample,
+        # pooled over every affected sample; check 5 reads this
+        "models": models,
+        "units": unit_rows,
+        "analysis": analysis,
+    }
+    if not assessable:
         return CheckResult(
             check=CHECK,
             status=Status.UNKNOWN,
@@ -679,27 +848,26 @@ def check_callability(
                 f"no coverage or a relative the pedigree does not list"
             ),
             findings=findings,
-            metrics={
-                "n_affected_with_coverage": n,
-                "target_bp": target_total,
-                "joint_callable_bp": joint_bp,
-                "joint_callable_fraction": joint_frac,
-                "product_of_per_sample_fractions": product if have_all_fractions else None,
-                "per_sample": per_sample,
-                "models": models,
-                "gating_model": None,
-                "gating_fraction": None,
-            },
+            metrics={**base_metrics, "gating_model": None, "gating_fraction": None},
             notes=notes,
         )
 
-    # The headline is the strictest model that could be assessed, because a single
-    # number has to be safe to quote for every model at once.
-    gating_model = min(computed, key=lambda m: computed[m]["fraction_of_target"])
-    gating = computed[gating_model]
-    gating_frac = gating["fraction_of_target"]
-    claim = claim_for(gating_frac, cfg)
-    rung = claim_rung_for(gating_frac, cfg)
+    # The headline is the worst unit's strictest assessable model, because a single
+    # number has to be safe to quote for every unit and every model at once.
+    worst = min(assessable, key=lambda u: u["gating_fraction"])
+    gating_model = worst["gating_model"]
+    gating = worst["models"][gating_model]
+    gating_frac = worst["gating_fraction"]
+    claim = worst["permitted_claim"]
+    rung = worst["claim_rung"]
+    cohort = {
+        "n_units": len(unit_rows),
+        "units_by_rung": by_rung,
+        "worst_unit": worst["unit"],
+        "worst_fraction": gating_frac,
+        "median_fraction": median([u["gating_fraction"] for u in assessable]),
+        "n_units_unknown": len(unit_rows) - len(assessable),
+    }
 
     if gating_frac < cfg.weak:
         severity, code = Severity.BLOCKING, "CALLABILITY_EXPLORATORY"
@@ -708,6 +876,13 @@ def check_callability(
     else:
         severity, code = Severity.INFO, "CALLABILITY_ADEQUATE"
 
+    scope = (
+        f"the worst of {len(unit_rows)} units ({worst['unit']}; "
+        + ", ".join(f"{v} {k}" for k, v in sorted(by_rung.items()))
+        + ")"
+        if multi
+        else "the target"
+    )
     findings.append(
         Finding(
             code=code,
@@ -715,11 +890,13 @@ def check_callability(
             message=(
                 f"{gating_frac:.1%} of the target is callable at once in the samples the "
                 f"strictest assessable model ({gating_model}) needs "
-                f"({', '.join(gating['required_samples'])}) - the data supports at most: "
-                f"\"{claim}\". {LIMITS[0].capitalize()}"
+                f"({', '.join(gating['required_samples'])})"
+                + (f", for {scope}" if multi else "")
+                + f" - the data supports at most: \"{claim}\". {LIMITS[0].capitalize()}"
             ),
             subjects=list(gating["required_samples"]),
             evidence={
+                "gating_unit": worst["unit"],
                 "gating_model": gating_model,
                 "gating_fraction": gating_frac,
                 "claim_rung": rung,
@@ -730,8 +907,9 @@ def check_callability(
                 "product_of_per_sample_fractions": product if have_all_fractions else None,
                 "permitted_claim": claim,
                 "limits": list(LIMITS),
+                "cohort": cohort,
                 "models_unknown": sorted(
-                    m for m, e in models.items() if e["status"] == "unknown"
+                    m for m, e in worst["models"].items() if e["status"] == "unknown"
                 ),
                 "thresholds_are_conventions": {"strong": cfg.strong, "weak": cfg.weak},
                 **(
@@ -756,28 +934,29 @@ def check_callability(
         else Status.PASS
     )
     # A number that leaves a model unassessed for want of a coverage file the user
-    # could have supplied is not a PASS whatever its value. A model the pedigree
-    # cannot define (de novo with no trio) is not that: check 5 calls it
-    # not-applicable, and holding it against PASS would make PASS unreachable for
-    # any family without a trio.
-    if status is Status.PASS and (missing_cov or no_cov_models):
+    # could have supplied is not a PASS whatever its value, and neither is a cohort
+    # with a unit nothing could be said about. A model the pedigree cannot define
+    # (de novo with no trio) is not that: check 5 calls it not-applicable, and
+    # holding it against PASS would make PASS unreachable for any family without a
+    # trio, or any single sample.
+    if status is Status.PASS and (missing_cov or any_no_cov or cohort["n_units_unknown"]):
         status = Status.WARN
     return CheckResult(
         check=CHECK,
         status=status,
         # Short on purpose: the text report truncates a summary to one terminal line.
-        summary=f"{gating_frac:.2f} of target searched ({gating_model})",
+        summary=(
+            f"{gating_frac:.2f} worst of {len(unit_rows)} units ({worst['unit']})"
+            if multi
+            else f"{gating_frac:.2f} of target searched ({gating_model})"
+        ),
         findings=findings,
         metrics={
-            "n_affected_with_coverage": n,
-            "target_bp": target_total,
-            "joint_callable_bp": joint_bp,
-            "joint_callable_fraction": joint_frac,
-            "product_of_per_sample_fractions": product if have_all_fractions else None,
-            "per_sample": per_sample,
-            "models": models,
+            **base_metrics,
+            "gating_unit": worst["unit"],
             "gating_model": gating_model,
             "gating_fraction": gating_frac,
+            "cohort": cohort,
         },
         notes=notes,
     )

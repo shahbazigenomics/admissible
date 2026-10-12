@@ -56,6 +56,16 @@ with a pedigree that has parents**, and drops a configuration field; read
   (`affected` or `relative`). Coverage that no model needs is noted.
 - `CallabilityConfig.full_penetrance_models` is replaced by
   `with_parents_models`, `affected_only_models` and `trio_model`.
+- **Analysis units.** Callability is judged per PED family with an affected member,
+  or per sample under the new `--independent`; the headline is the worst unit's
+  strictest assessable model (`units`, `cohort`, `analysis`, `gating_unit`). Before,
+  an unrelated cohort was one joint intersection, so 12 individually adequate
+  cases reported FAIL (0.38) while the worst single case was 0.93. The pooled
+  `models` and `joint_callable_fraction` are unchanged, because check 5 reads them.
+  With no PED and no flag the old one-group behaviour remains and a note points at
+  `--independent`.
+- **`--affected-only`** drops parents from the required sets (a proband without
+  sequenced parents). De novo is then structurally undefined, not "missing coverage".
 - New library functions `intervals.subtract` and `intervals.read_named_bed`; nothing
   uses them yet.
 
