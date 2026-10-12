@@ -323,6 +323,155 @@ and nothing else.
 Reproduce with `git clone --depth 1 https://github.com/brentp/peddy /tmp/peddy`
 then `pytest tests/test_public_ceph.py` (the tests skip if the data is absent).
 
+### What check 4 may claim
+
+Check 4 reports, per inheritance model, the share of the target that was callable
+in **every sample that model needs**, and the strongest statement that share
+permits. The statement is about what was searched and never says a cause was
+excluded:
+
+| callable share | `claim_rung` | what may be said |
+|---|---|---|
+| at or above `strong` (0.80) | `SEARCHED_MOST` | no candidate identified in the searched portion; N% of the target was not searched |
+| at or above `weak` (0.50) | `SEARCHED_PARTLY` | the same, and power is limited |
+| below `weak` | `EXPLORATORY` | exploratory only; N% was not searched and a causal variant may lie in it |
+
+The 0.80 and 0.50 thresholds are conventions, not derived quantities. They are
+configurable, and the rung follows whatever is configured. Machine consumers should
+branch on `claim_rung`, not on the wording.
+
+**Depth-based callability is blind to heterozygous deletions.** A deleted allele
+leaves depth above any sensible floor, so the region reads as callable and the
+surviving allele is called homozygous. No fraction here, however high, speaks to
+structural variants; a CNV caller answers that question and this check does not.
+
+Which samples a model needs, taken from the PED:
+
+| model | samples that must be callable at a position |
+|---|---|
+| recessive, compound-het, dominant, x-linked-recessive, x-linked-dominant | every affected sample and the affected samples' parents |
+| phenocopy(n-1) | all but one affected sample, and the parents |
+| de-novo | one complete trio (child and both parents) — any one — so a union over affected children |
+| dominant-reduced-penetrance, mitochondrial | the affected samples |
+
+The parents are required because the inheritance sweep (check 5) discards any site
+at which a relative it relies on was not observed, so a site whose parent was not
+callable was never assessable. A required sample with no coverage file makes the
+model `UNKNOWN`; it is not computed over the samples that remain, which would raise
+the number. A parent the pedigree does not list cannot be required and is noted.
+Unaffected relatives other than the parents are not required here, although check 5
+also drops sites where they were unobserved, so with unaffected siblings in the
+pedigree the share can exceed what check 5 could verify.
+
+The headline `gating_fraction` is the strictest model that could be assessed.
+`joint_callable_fraction` is still reported and is the affected-only intersection.
+
+### One sample, a family, or a cohort
+
+Check 4 judges each **analysis unit** separately and takes the worst as the headline,
+because a pooled number answers a question nobody asked: a 12-case cohort whose cases
+are unrelated is not one recessive hypothesis needing all 12 callable at once.
+
+| input | units |
+|---|---|
+| PED with families | one unit per family that has an affected member |
+| `--independent` | one unit per sample; pedigree structure is ignored |
+| no PED, no `--independent` | one pooled group (the safe reading of a real family supplied without a PED); a note points at `--independent` |
+
+`--affected-only` drops the parents from every model's required set, for a proband
+whose parents were not sequenced. De novo is then undefined (it needs the trio) and
+is reported as such, not as missing coverage. The headline is the worst unit's
+strictest assessable model, and the worst unit is named in the summary. The pooled
+per-model numbers stay in `models`, because check 5 pools all affected samples
+across families. Per-unit detail is in `units`; the cohort roll-up is in `cohort`.
+
+### One gene, one exon: `--by-region`
+
+A single fraction averages a dead exon away: ten equal exons with one wholly
+uncovered is 90% callable, and "90% searched" is the wrong thing to say about that
+gene. Pass `--target` as a BED whose **column 4 names the regions** and add
+`--by-region`:
+
+    admissible callability --ped fam.ped --coverage KID=kid.quantized.bed.gz \
+        --target gene_exons.bed --by-region
+
+The JSON gains `metrics.by_region.units.<unit>` with one row per region (worst
+first) and one row per gene:
+
+| field | meaning |
+|---|---|
+| `fraction`, `callable_bp`, `bp` | share of the region callable in every sample the unit's strictest model needs |
+| `status` | `ok`, or `NOT_REPORTED` (below) |
+| `fully_uncallable` | the region has no callable base |
+| `uncallable_intervals` | the gaps, at most 10 listed (`n_uncallable_intervals` is the true count) |
+| `claim_rung`, `permitted_claim` | per region, from the same thresholds as the headline |
+| gene: `worst_region`, `worst_fraction`, `fraction`, `capped` | worst exon, and the bp-weighted share |
+
+A gene holding a region with **no callable base**, or one the coverage file does
+not report, cannot be rated above `SEARCHED_PARTLY` (`blind_region_cap`, configurable)
+however high its share, and its `permitted_claim` names the regions. The headline
+number and status are **not** changed by `--by-region`: they are about the whole
+target, and a whole-exome run would otherwise be capped by some blind exon
+somewhere. For a gene-level question read the gene row.
+
+Notes on the rows:
+
+- It is opt-in because kit BEDs often have column-4 names already; switching on their
+  presence would change what existing users get. Without `--by-region` the output has
+  no `by_region` key and every other number is unchanged.
+- A gene is the region name with a trailing marker removed once (`BRCA1_exon3`,
+  `BRCA1_3`, `BRCA1.3` give `BRCA1`). Change it with `--gene-regex`; a name it does
+  not match is its own gene. This is naming convention, not annotation: a name such
+  as `NM_000546.6_exon3` becomes the transcript, not the gene symbol.
+- Lines sharing a name are one region. Two *different* names that overlap stay two
+  regions. Unnamed lines become regions named by their coordinates.
+- Contig names in the output are normalised (`chr1` is shown as `1`).
+- Rows are capped at `max_region_rows` (5000 per unit), worst first, and the true
+  counts are reported, so a long list cannot be read as complete.
+- **NOT_REPORTED is not zero.** A contig the coverage file never mentions gives no
+  fraction and the claim `UNKNOWN`. Reporting it as zero would claim a measurement
+  nobody made; as covered, the opposite. Whole-target fractions still count it as not
+  searched, the safe direction. A callable-only BED that omits a contig cannot
+  distinguish "no callable bases" from "not reported", and is treated as the latter.
+
+### Excluding low-mappability regions: `--exclude-bed`
+
+    admissible callability ... --target kit.bed --exclude-bed low_mappability.bed
+
+Depth in repeats and low-mappability regions is unreliable (reads multi-map, so depth
+can be high where calls cannot be trusted). Intervals in the exclusion BED are taken
+out of every model's callable set and counted as **not searched**; the denominator
+stays the full target. The claim follows this stricter figure. Each model entry keeps
+the unfiltered figure as `without_exclusion`, and `metrics.exclusion` reports how much
+of the target the BED removes. `per_sample` fractions and `joint_callable_fraction`
+remain unfiltered. admissible ships no exclusion track: supply your own, on the same
+build as the target.
+
+### Is this the right target?
+
+Two plausibility warnings, neither of which changes the status:
+
+- `TARGET_CONTIG_NOT_IN_COVERAGE`: a coverage file never mentions a target contig.
+- `TARGET_KIT_MISMATCH_SUSPECTED`: for a target of at least `kit_min_bp` (5 Mb), less
+  than `kit_share_warn` (0.50) of a sample's callable bases fall inside it, which is
+  what coverage from another kit, a whole-genome run or another build looks like.
+  A gene panel is exempt, because it is legitimately a sliver of any sample's
+  callable bases. **Both numbers are uncalibrated defaults, not derived from a
+  benchmark.** The genome build cannot be read from contig names, so a build
+  mismatch is caught only when it shows up as this overlap.
+
+### Known limits of check 4
+
+- **Heterozygous deletions and other structural variants are invisible to a depth
+  floor** (stated above, beside the claim).
+- **Hemizygous chrX is not treated specially.** One depth floor applies to everyone,
+  so X-linked fractions in males are biased low (the conservative direction). A
+  sex-aware floor is proposed in `docs/hemizygous-chrx-floor.md` and not implemented.
+- **None of 0.2.0's callability behaviour has been validated on real capture data or
+  against an independent tool.** `validation/callability/` holds the scripts to do it
+  against `bedtools` on at least two kits; they have not been run. Status per
+  problem: `docs/callability-0.2.0-status.md`.
+
 ### Real capture coverage
 
 Check 4's central claim — that the joint callable fraction is an intersection and
@@ -338,8 +487,8 @@ denominator taken from an Ensembl GTF rather than from the coverage itself:
 | three of four (phenocopy model) | 0.6870 |
 
 The product is 41% low, because the four lose coverage in the same places. At
-0.38 of the target searched, the strongest permitted claim is *exploratory; a
-causal variant cannot be excluded* — which is what the tool reports.
+At 0.38 of the target searched the rung is `EXPLORATORY`: 61.9% of the target was
+not searched, and a causal variant may lie in it.
 
 4,134 bp over four samples is a small measurement and carries real sampling
 noise. It demonstrates the effect on real capture; it does not estimate its size

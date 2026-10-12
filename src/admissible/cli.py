@@ -78,6 +78,34 @@ def build_parser() -> argparse.ArgumentParser:
             help="capture kit target BED - the denominator for 'fraction searched'",
         )
         sp.add_argument(
+            "--independent", action="store_true",
+            help="callability: treat every sample as its own case with no relatives "
+                 "(a cohort of unrelated people, or several singletons). A claim is "
+                 "then made per sample, and the headline is the worst sample.",
+        )
+        sp.add_argument(
+            "--affected-only", action="store_true",
+            help="callability: do not require the affected samples' parents to be "
+                 "callable. For a proband whose relatives are not sequenced; the "
+                 "result says it describes a search over the affected samples alone.",
+        )
+        sp.add_argument(
+            "--by-region", action="store_true",
+            help="callability: one row per named region of --target (column 4), plus "
+                 "the worst region per gene. Opt-in: kit BEDs often carry names "
+                 "already, and the default output is unchanged.",
+        )
+        sp.add_argument(
+            "--gene-regex", default=None, metavar="RE",
+            help="callability --by-region: pattern removed once from a region name to "
+                 "get its gene (default strips _exonN / _N / .N suffixes)",
+        )
+        sp.add_argument(
+            "--exclude-bed", type=Path, default=None, metavar="BED",
+            help="callability: low-mappability or repeat intervals to treat as not "
+                 "searched. The fraction is reported with and without them.",
+        )
+        sp.add_argument(
             "--af-field", default=None, metavar="KEY",
             help="name of an allele-frequency field already present in your own "
                  "annotation (INFO key or ANNOVAR column), used to rarity-filter "
@@ -219,13 +247,24 @@ def main(argv: list[str] | None = None) -> int:
         for item in getattr(args, "coverage", []):
             label, path = item.split("=", 1)
             spec[label] = path
-        cov_cfg = CallabilityConfig(min_depth=args.min_depth)
+        cov_cfg = CallabilityConfig(
+            min_depth=args.min_depth,
+            require_relatives=not getattr(args, "affected_only", False),
+            independent=getattr(args, "independent", False),
+            by_region=getattr(args, "by_region", False),
+            **(
+                {"gene_regex": args.gene_regex}
+                if getattr(args, "gene_regex", None) is not None
+                else {}
+            ),
+        )
         report.checks.append(
             check_callability(
                 load_coverage(spec, cov_cfg) if spec else None,
                 ped,
                 target_bed=args.target,
                 cfg=cov_cfg,
+                exclude_bed=getattr(args, "exclude_bed", None),
                 # --family is a free-text report label; only use it to select
                 # affected samples when it actually names a family in the PED.
                 family_id=(

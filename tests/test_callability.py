@@ -72,11 +72,17 @@ def test_bed_reader_never_raises(tmp_path):
 
 @pytest.fixture
 def ped(tmp_path):
+    """Three affected samples and one unaffected, with NO parents recorded.
+
+    A flat family keeps these tests about affected-only semantics. Parent
+    requirements are tested in ``test_callability_required_samples.py``, which uses a
+    trio PED.
+    """
     p = tmp_path / "f.ped"
     p.write_text(
         "#FID\tIID\tPAT\tMAT\tSEX\tPHENO\n"
-        "F\tDAD\t0\t0\t1\t1\nF\tMUM\t0\t0\t2\t1\n"
-        "F\tKID1\tDAD\tMUM\t1\t2\nF\tKID2\tDAD\tMUM\t2\t2\nF\tKID3\tDAD\tMUM\t1\t2\n"
+        "F\tCTRL\t0\t0\t1\t1\n"
+        "F\tKID1\t0\t0\t1\t2\nF\tKID2\t0\t0\t2\t2\nF\tKID3\t0\t0\t1\t2\n"
     )
     return read_ped(p)
 
@@ -150,7 +156,9 @@ def test_low_callability_blocks_and_forbids_the_negative_claim(tmp_path, ped):
     assert res.status is Status.FAIL
     f = next(x for x in res.findings if x.code == "CALLABILITY_EXPLORATORY")
     assert f.evidence["do_not_conclude"] == "no monogenic cause"
-    assert "cannot be excluded" in f.evidence["permitted_claim"]
+    assert f.evidence["claim_rung"] == "EXPLORATORY"
+    assert "80.0% of the target was not searched" in f.evidence["permitted_claim"]
+    assert "excluded" not in f.evidence["permitted_claim"]
 
 
 def test_high_callability_permits_the_strong_claim(tmp_path, ped):
@@ -162,7 +170,9 @@ def test_high_callability_permits_the_strong_claim(tmp_path, ped):
     res = check_callability(load_coverage(spec), ped, target_bed=target)
     assert res.status is Status.PASS
     f = next(x for x in res.findings if x.code == "CALLABILITY_ADEQUATE")
-    assert "excluded for the models tested" in f.evidence["permitted_claim"]
+    assert f.evidence["claim_rung"] == "SEARCHED_MOST"
+    assert "5.0% of the target was not searched" in f.evidence["permitted_claim"]
+    assert "excluded" not in f.evidence["permitted_claim"]
     assert "do_not_conclude" not in f.evidence
 
 
@@ -172,12 +182,16 @@ def test_only_affected_samples_count(tmp_path, ped):
         "KID1": write_bed(tmp_path / "k1.bed", [("chr1", 0, 9_000)]),
         "KID2": write_bed(tmp_path / "k2.bed", [("chr1", 0, 9_000)]),
         "KID3": write_bed(tmp_path / "k3.bed", [("chr1", 0, 9_000)]),
-        "DAD": write_bed(tmp_path / "dad.bed", [("chr1", 0, 100)]),
+        "CTRL": write_bed(tmp_path / "ctrl.bed", [("chr1", 0, 100)]),
     }
     res = check_callability(load_coverage(spec), ped, target_bed=target)
     assert res.metrics["n_affected_with_coverage"] == 3
-    assert "DAD" not in res.metrics["per_sample"]
+    # An unaffected sample no model needs is reported, but changes no fraction.
+    assert res.metrics["per_sample"]["CTRL"]["role"] == "relative"
     assert res.metrics["joint_callable_fraction"] == pytest.approx(0.90)
+    assert res.metrics["models"]["recessive"]["fraction_of_target"] == pytest.approx(0.90)
+    assert "CTRL" not in res.metrics["models"]["recessive"]["required_samples"]
+    assert any("CTRL" in n and "no model needs" in n for n in res.notes)
 
 
 def test_thresholds_are_labelled_as_conventions(tmp_path, ped):
