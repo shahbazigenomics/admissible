@@ -52,3 +52,9 @@ assumed to match. See `validation/results/` for the recorded
 ```
 python validation/ceph_coding_only_head_to_head.py
 ```
+
+## `callability/`
+
+Check 4 against an independent `bedtools` baseline, for at least two capture kits.
+**Written, not run:** nothing in 0.2.0 has been validated by it yet. See
+`validation/callability/README.md` for what it would and would not show.

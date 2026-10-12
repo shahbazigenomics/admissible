@@ -84,11 +84,23 @@ with a pedigree that has parents**, and drops a configuration field; read
   `intervals.IntervalIndex` (binary-search overlap and gaps, so one query per exon
   does not cost a whole contig), and `BedFile.contigs_seen`.
 
+### Documentation and validation
+
+- `docs/callability-0.2.0-status.md`: per problem, confirmed / fixed / documented
+  only / still open.
+- `docs/hemizygous-chrx-floor.md`: the male-chrX depth bias and a sex-aware-floor
+  proposal. Documented only; nothing implemented.
+- `validation/callability/`: bedtools baseline, comparator and driver for at least two
+  capture kits. **Written, not run.** Nothing in 0.2.0 is validated against real data
+  or an independent tool.
+
 ### Known limitations
 
 - Unaffected relatives other than the parents are not required, although check 5
   drops sites where they were unobserved, so the share can exceed what check 5 could
   verify when the pedigree has unaffected siblings.
+- Hemizygous chrX is not treated specially: X-linked fractions in males are biased low
+  (see `docs/hemizygous-chrx-floor.md`).
 - Depth-based callability is blind to heterozygous deletions and other structural
   variants. Stated beside the claim in the README and in every finding's `limits`.
 

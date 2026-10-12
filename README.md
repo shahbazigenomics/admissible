@@ -460,6 +460,18 @@ Two plausibility warnings, neither of which changes the status:
   benchmark.** The genome build cannot be read from contig names, so a build
   mismatch is caught only when it shows up as this overlap.
 
+### Known limits of check 4
+
+- **Heterozygous deletions and other structural variants are invisible to a depth
+  floor** (stated above, beside the claim).
+- **Hemizygous chrX is not treated specially.** One depth floor applies to everyone,
+  so X-linked fractions in males are biased low (the conservative direction). A
+  sex-aware floor is proposed in `docs/hemizygous-chrx-floor.md` and not implemented.
+- **None of 0.2.0's callability behaviour has been validated on real capture data or
+  against an independent tool.** `validation/callability/` holds the scripts to do it
+  against `bedtools` on at least two kits; they have not been run. Status per
+  problem: `docs/callability-0.2.0-status.md`.
+
 ### Real capture coverage
 
 Check 4's central claim — that the joint callable fraction is an intersection and

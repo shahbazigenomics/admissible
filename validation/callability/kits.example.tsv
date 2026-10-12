@@ -1,0 +1,18 @@
+# Copy to kits.tsv and fill in. Tab-separated; lines starting with # are ignored.
+# At least TWO different kit names are required, otherwise the run reports itself
+# INCOMPLETE: one kit cannot show that the result does not depend on the kit.
+#
+# kit	sample	coverage	target	exclude(optional)
+#
+# kit      a label for the capture kit (any string; rows with the same label share a kit)
+# sample   a sample label (used as the --coverage label)
+# coverage mosdepth --quantize 0:10: output for that sample (*.quantized.bed.gz),
+#          i.e. rows labelled 0:10 and 10:inf
+# target   that kit's target BED. Column 4 should name the regions (exon or gene_exonN)
+# exclude  optional low-mappability / repeat BED on the same build; leave empty for none
+#
+# Placeholders only - no dataset is named here because none has been chosen and checked:
+KIT_A	SAMPLE_A1	/path/to/SAMPLE_A1.quantized.bed.gz	/path/to/kit_a_targets.bed	/path/to/low_mappability.bed
+KIT_A	SAMPLE_A2	/path/to/SAMPLE_A2.quantized.bed.gz	/path/to/kit_a_targets.bed	/path/to/low_mappability.bed
+KIT_B	SAMPLE_B1	/path/to/SAMPLE_B1.quantized.bed.gz	/path/to/kit_b_targets.bed	/path/to/low_mappability.bed
+KIT_B	SAMPLE_B2	/path/to/SAMPLE_B2.quantized.bed.gz	/path/to/kit_b_targets.bed	/path/to/low_mappability.bed
