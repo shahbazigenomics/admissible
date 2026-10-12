@@ -20,6 +20,7 @@ from __future__ import annotations
 import gzip
 import os
 import zlib
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 
 from .contigs import normalize_contig
@@ -40,6 +41,10 @@ class BedFile:
     # rather than silently getting nothing when it asked for a bin that is not
     # there.
     labels: dict[str, int] = field(default_factory=dict)
+    # Every contig that has at least one valid line, whatever its label.  A contig
+    # that is absent from a coverage file was not reported, which is different from
+    # a contig that was reported and had no callable bases.
+    contigs_seen: set[str] = field(default_factory=set)
 
     @property
     def total_bp(self) -> int:
@@ -81,6 +86,7 @@ def read_bed(
                 if end <= start:
                     bed.n_malformed += 1
                     continue
+                bed.contigs_seen.add(normalize_contig(f[0]))
                 if len(f) >= 4 and f[3].strip():
                     lab = f[3].strip()
                     bed.labels[lab] = bed.labels.get(lab, 0) + (end - start)
@@ -222,6 +228,74 @@ def subtract(a: IntervalSet, b: IntervalSet) -> IntervalSet:
         if res:
             out[chrom] = res
     return out
+
+
+class IntervalIndex:
+    """Fast "how many bases of this interval are in the set" queries.
+
+    ``intersect`` walks a whole contig on every call, which is fine for one query
+    and quadratic for one query per exon of an exome.  This indexes a set once
+    (normalising it, so unsorted or overlapping input cannot give a wrong answer)
+    and answers each query with two binary searches and a prefix sum.
+    """
+
+    def __init__(self, iset: IntervalSet) -> None:
+        self._starts: dict[str, list[int]] = {}
+        self._ends: dict[str, list[int]] = {}
+        self._cum: dict[str, list[int]] = {}
+        for chrom, ivs in iset.items():
+            m = merge(list(ivs))
+            if not m:
+                continue
+            self._starts[chrom] = [s for s, _ in m]
+            self._ends[chrom] = [e for _, e in m]
+            cum = [0]
+            for s, e in m:
+                cum.append(cum[-1] + (e - s))
+            self._cum[chrom] = cum
+
+    def overlap_bp(self, chrom: str, start: int, end: int) -> int:
+        starts = self._starts.get(chrom)
+        if not starts or end <= start:
+            return 0
+        ends = self._ends[chrom]
+        i = bisect_right(ends, start)  # first interval ending after `start`
+        j = bisect_left(starts, end)  # intervals [0, j) begin before `end`
+        if j <= i:
+            return 0
+        cum = self._cum[chrom]
+        total = cum[j] - cum[i]
+        total -= max(0, start - starts[i])
+        total -= max(0, ends[j - 1] - end)
+        return total
+
+    def gaps(self, chrom: str, start: int, end: int) -> list[Interval]:
+        """The parts of ``[start, end)`` that are not in the index, in order.
+
+        The per-region counterpart of ``subtract``, which re-normalises its second
+        argument on every call and so costs a whole contig per exon.
+        """
+        if end <= start:
+            return []
+        starts = self._starts.get(chrom)
+        if not starts:
+            return [(start, end)]
+        ends = self._ends[chrom]
+        i = bisect_right(ends, start)
+        j = bisect_left(starts, end)
+        out: list[Interval] = []
+        cur = start
+        for k in range(i, j):
+            if starts[k] > cur:
+                out.append((cur, starts[k]))
+            cur = max(cur, ends[k])
+        if cur < end:
+            out.append((cur, end))
+        return out
+
+    def overlap_set_bp(self, iset: IntervalSet) -> int:
+        """Bases of ``iset`` that fall in the index.  ``iset`` must be merged."""
+        return sum(self.overlap_bp(c, s, e) for c, v in iset.items() for s, e in v)
 
 
 @dataclass

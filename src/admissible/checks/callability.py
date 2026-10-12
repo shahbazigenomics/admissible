@@ -46,11 +46,14 @@ from ..intervals import (
     intersect,
     merge,
     read_bed,
+    read_named_bed,
+    subtract,
     total_bp,
 )
 from ..model import CheckResult, Finding, Severity, Status, never_raises, unknown
 from ..ped import Pedigree
 from ..stats import median
+from .callability_regions import analyse_regions
 
 CHECK = "callability"
 
@@ -102,6 +105,24 @@ class CallabilityConfig:
     independent: bool = False
     # All but one affected sample, plus the parents.
     phenocopy_model: str = "phenocopy(n-1)"
+    # --- per-region output (opt-in) ---
+    by_region: bool = False
+    # Removed once from a region name to get its gene: a trailing separator and
+    # digits, optionally "exon"/"ex"/"e" (BRCA1_exon3, BRCA1_3, BRCA1.3 -> BRCA1).
+    # A name this does not match is its own gene.  Names are not parsed beyond this.
+    gene_regex: str = r"[_.\-:](?:exon|ex|e)?\d+$"
+    # A gene holding a region with no callable base, or one the coverage file does
+    # not report, cannot be called better than this rung however high its fraction.
+    blind_region_cap: str = RUNG_PARTLY
+    # Worst-first rows kept per unit; the rest are counted, not listed.
+    max_region_rows: int = 5000
+    max_listed_intervals: int = 10
+    # Target/kit sanity.  Only a target at least this large is treated as a
+    # whole-exome-scale kit; a gene panel's target is legitimately a sliver of a
+    # sample's callable bases.  Both numbers are UNCALIBRATED defaults, there so the
+    # check can be switched on, not values derived from a benchmark.
+    kit_min_bp: int = 5_000_000
+    kit_share_warn: float = 0.50
 
 
 @dataclass
@@ -115,6 +136,9 @@ class SampleCoverage:
     bins_straddling: list[str] = field(default_factory=list)
     bins_dropped: list[str] = field(default_factory=list)
     unlabelled: bool = False
+    # Contigs the file mentions at all (any label).  Absent from here means "not
+    # reported", which is not the same as "reported and uncallable".
+    contigs_reported: set[str] = field(default_factory=set)
 
 
 def _bin_bounds(label: str) -> tuple[float, float] | None:
@@ -158,6 +182,7 @@ def load_coverage(
                 SampleCoverage(
                     label=label, path=str(path), intervals=bed.intervals,
                     problems=problems, unlabelled=True,
+                    contigs_reported=set(bed.contigs_seen),
                 )
             )
             continue
@@ -190,6 +215,7 @@ def load_coverage(
             SampleCoverage(
                 label=label, path=str(path), intervals=merged, problems=problems,
                 bins_kept=kept, bins_straddling=straddling, bins_dropped=dropped,
+                contigs_reported=set(bed.contigs_seen),
             )
         )
     return out
@@ -437,6 +463,7 @@ def _model_table(
     cov_sets: dict[str, IntervalSet],
     fraction_of_target,
     cfg: CallabilityConfig,
+    exclude: IntervalSet | None = None,
 ) -> dict[str, dict]:
     models: dict[str, dict] = {}
     for name, req in reqs.items():
@@ -455,7 +482,17 @@ def _model_table(
             "claim_rung": RUNG_UNKNOWN,
         }
         if req.evaluable:
-            m_bp, m_frac = fraction_of_target(requirement_intervals(req, cov_sets))
+            callable_set = requirement_intervals(req, cov_sets)
+            m_bp, m_frac = fraction_of_target(callable_set)
+            if exclude is not None:
+                # Subtraction distributes over intersection and k-of-n, so removing
+                # the exclusion once from the joint set equals removing it from every
+                # sample first.  The claim follows the stricter, filtered number; the
+                # raw one stays beside it so both can be reported.
+                entry["without_exclusion"] = {
+                    "callable_bp": m_bp, "fraction_of_target": m_frac,
+                }
+                m_bp, m_frac = fraction_of_target(subtract(callable_set, exclude))
             entry["callable_bp"] = m_bp
             entry["fraction_of_target"] = m_frac
             if m_frac is not None:
@@ -489,6 +526,112 @@ def _unit_summary(
     }
 
 
+def _contig_reporter(req: ModelRequirement, contigs: dict[str, set[str]]):
+    """Whether the samples a model needs *report* a contig at all.
+
+    Follows the model's own structure: every ``all_of`` sample, at least ``k`` of a
+    k-of-n set, or at least one complete trio.  A contig nobody reports is not
+    "uncallable"; it is unmeasured, and the region table says so.
+    """
+
+    def reported(contig: str) -> bool:
+        if req.trios is not None:
+            return any(all(contig in contigs.get(x, ()) for x in t) for t in req.trios)
+        ok = all(contig in contigs.get(m, ()) for m in req.all_of)
+        if ok and req.k_of is not None:
+            members, k = req.k_of
+            ok = sum(contig in contigs.get(m, ()) for m in members) >= k
+        return ok
+
+    return reported
+
+
+def _by_region_block(
+    target_bed: str | os.PathLike[str],
+    unit_rows: list[dict],
+    unit_reqs: dict[str, dict[str, ModelRequirement]],
+    cov_sets: dict[str, IntervalSet],
+    contigs: dict[str, set[str]],
+    exclude: IntervalSet | None,
+    cfg: CallabilityConfig,
+) -> tuple[dict, list[Finding], list[str]]:
+    """Per-region rows for each unit's strictest assessable model."""
+    named = read_named_bed(target_bed)
+    notes = [f"target BED (by region): {p}" for p in named.problems]
+    units: dict[str, dict] = {}
+    for u in unit_rows:
+        model = u["gating_model"]
+        if model is None:
+            units[u["unit"]] = {"model": None, "reason": "no model could be assessed"}
+            continue
+        req = unit_reqs[u["unit"]][model]
+        callable_set = requirement_intervals(req, cov_sets)
+        if exclude is not None:
+            callable_set = subtract(callable_set, exclude)
+        out = analyse_regions(
+            named,
+            callable_set,
+            _contig_reporter(req, contigs),
+            gene_regex=cfg.gene_regex,
+            claim_rung_for=lambda f: claim_rung_for(f, cfg),
+            claim_for=lambda f: claim_for(f, cfg),
+            blind_cap=cfg.blind_region_cap,
+            max_rows=cfg.max_region_rows,
+            max_listed=cfg.max_listed_intervals,
+        )
+        notes += out.pop("notes")
+        out["model"] = model
+        units[u["unit"]] = out
+    if not named.has_names and named.regions:
+        notes.append(
+            "the target BED has no column-4 names on some or all lines, so those "
+            "regions are named by their coordinates and each is its own gene"
+        )
+    block = {
+        "path": named.path,
+        "n_lines": named.n_lines,
+        "n_unnamed": named.n_unnamed,
+        "has_names": named.has_names,
+        "n_regions": len(named.regions),
+        "gene_regex": cfg.gene_regex,
+        "basis": "each unit's strictest assessable model",
+        "units": units,
+    }
+    findings: list[Finding] = []
+    flagged = {
+        uid: v for uid, v in units.items()
+        if v.get("n_fully_uncallable_regions") or v.get("n_not_reported_regions")
+    }
+    if flagged:
+        ex = {}
+        for uid, v in flagged.items():
+            ex[uid] = {
+                "model": v["model"],
+                "n_fully_uncallable_regions": v["n_fully_uncallable_regions"],
+                "n_not_reported_regions": v["n_not_reported_regions"],
+                "n_genes_with_unsearched_region": v["n_genes_with_unsearched_region"],
+                "n_genes_capped": v["n_genes_capped"],
+                "genes": [
+                    g["gene"] for g in v["genes"]
+                    if g["n_fully_uncallable"] or g["n_not_reported"]
+                ][:20],
+            }
+        findings.append(
+            Finding(
+                code="TARGET_REGIONS_NOT_SEARCHED",
+                severity=Severity.WARN,
+                message=(
+                    f"in {len(flagged)} of {len(units)} unit(s), some target region has "
+                    f"no callable base or is not reported by the coverage file; a gene "
+                    f"holding one cannot be rated above {cfg.blind_region_cap}, "
+                    f"whatever its overall fraction"
+                ),
+                evidence={"units": ex, "see": "metrics.by_region"},
+            )
+        )
+    return block, findings, notes
+
+
 @never_raises(CHECK)
 def check_callability(
     coverage: list[SampleCoverage] | None = None,
@@ -496,6 +639,7 @@ def check_callability(
     target_bed: str | os.PathLike[str] | None = None,
     cfg: CallabilityConfig | None = None,
     family_id: str | None = None,
+    exclude_bed: str | os.PathLike[str] | None = None,
 ) -> CheckResult:
     cfg = cfg or CallabilityConfig()
 
@@ -566,6 +710,49 @@ def check_callability(
         target_problems = tb.problems
     target_total = total_bp(target) if target else None
 
+    pre_findings: list[Finding] = []
+    pre_notes: list[str] = []
+    exclude: IntervalSet | None = None
+    exclusion_info: dict | None = None
+    if exclude_bed is not None:
+        xb = read_bed(exclude_bed)
+        pre_notes += [f"exclusion BED: {p}" for p in xb.problems]
+        if not xb.intervals:
+            pre_findings.append(
+                Finding(
+                    code="EXCLUDE_BED_UNUSABLE",
+                    severity=Severity.WARN,
+                    message=(
+                        f"the exclusion BED {exclude_bed} has no usable interval, so it "
+                        f"was not applied and the fractions are unfiltered"
+                    ),
+                    evidence={"path": str(exclude_bed), "problems": xb.problems},
+                )
+            )
+        else:
+            exclude = xb.intervals
+            if target:
+                in_target = total_bp(intersect(exclude, target))
+                exclusion_info = {
+                    "path": str(exclude_bed),
+                    "bp": total_bp(exclude),
+                    "bp_in_target": in_target,
+                    "fraction_of_target_excluded": (
+                        in_target / target_total if target_total else None
+                    ),
+                }
+                if in_target == 0:
+                    pre_notes.append(
+                        "the exclusion BED does not overlap the target, so it changed "
+                        "no fraction; check that it is on the same build"
+                    )
+            else:
+                pre_notes.append(
+                    "an exclusion BED was supplied but there is no target BED, so it "
+                    "could not be applied"
+                )
+                exclude = None
+
     def fraction_of_target(iset: IntervalSet) -> tuple[int, float | None]:
         bp = total_bp(intersect(iset, target)) if target else total_bp(iset)
         frac = (bp / target_total) if target_total else None
@@ -603,26 +790,24 @@ def check_callability(
     ped_for_reqs = None if cfg.independent else ped
     cov_sets = {label: c.intervals for label, c in cov_by_label.items()}
     reqs = resolve_requirements(ped_for_reqs, affected_all, have, cfg)
-    models = _model_table(reqs, cov_sets, fraction_of_target, cfg)
+    models = _model_table(reqs, cov_sets, fraction_of_target, cfg, exclude)
 
     unit_defs = _analysis_units(ped, affected_ped, [c.label for c in coverage], cfg)
+    unit_reqs: dict[str, dict[str, ModelRequirement]] = {}
     if len(unit_defs) == 1:
         unit_rows = [_unit_summary(*unit_defs[0], models)]
+        unit_reqs[unit_defs[0][0]] = reqs
     else:
-        unit_rows = [
-            _unit_summary(
-                uid,
-                fam,
-                members,
-                _model_table(
-                    resolve_requirements(ped_for_reqs, members, have, cfg),
-                    cov_sets,
-                    fraction_of_target,
-                    cfg,
-                ),
+        unit_rows = []
+        for uid, fam, members in unit_defs:
+            u_reqs = resolve_requirements(ped_for_reqs, members, have, cfg)
+            unit_reqs[uid] = u_reqs
+            unit_rows.append(
+                _unit_summary(
+                    uid, fam, members,
+                    _model_table(u_reqs, cov_sets, fraction_of_target, cfg, exclude),
+                )
             )
-            for uid, fam, members in unit_defs
-        ]
     multi = len(unit_rows) > 1
     for label in cov_by_label:
         if any(label in u["affected"] for u in unit_rows):
@@ -645,8 +830,8 @@ def check_callability(
     undefined_by_unit = {u["unit"]: _undefined(u["models"]) for u in unit_rows}
     any_no_cov = any(no_cov_by_unit.values())
 
-    findings: list[Finding] = []
-    notes: list[str] = []
+    findings: list[Finding] = list(pre_findings)
+    notes: list[str] = list(pre_notes)
     if notes_affected:
         notes.append(notes_affected)
     if cfg.independent:
@@ -790,6 +975,8 @@ def check_callability(
             "makes the number self-referential. Callable base counts are reported "
             "instead."
         )
+        if cfg.by_region:
+            notes.append("--by-region needs a target BED and was not applied")
         return CheckResult(
             check=CHECK,
             status=Status.UNKNOWN,
@@ -823,6 +1010,82 @@ def check_callability(
             f"be used as the joint callable fraction."
         )
 
+    # --- scope: contigs the coverage file does not mention --------------------
+    contigs = {label: set(c.contigs_reported) for label, c in cov_by_label.items()}
+    target_contigs = sorted(target)
+    scope: dict[str, dict] = {}
+    for label, seen in contigs.items():
+        absent = [c for c in target_contigs if c not in seen]
+        if absent:
+            scope[label] = {
+                "contigs": absent,
+                "target_bp": sum(e - st for c in absent for st, e in target[c]),
+            }
+    if scope:
+        listed = "; ".join(f"{k}: " + ", ".join(v["contigs"][:6]) for k, v in scope.items())
+        findings.append(
+            Finding(
+                code="TARGET_CONTIG_NOT_IN_COVERAGE",
+                severity=Severity.WARN,
+                message=(
+                    f"{len(scope)} coverage file(s) never mention some target contig(s) "
+                    f"({listed}). "
+                    f"The fractions count those bases as not searched, but the file "
+                    f"does not say whether they were uncallable or simply not reported"
+                ),
+                evidence={
+                    "per_sample": scope,
+                    "next_steps": [
+                        "re-run mosdepth over every contig in the target, or confirm "
+                        "the coverage file is the one for this sample and build"
+                    ],
+                },
+            )
+        )
+
+    # --- sanity: does this target look like the kit that produced the coverage? ---
+    # Share of a sample's callable bases that fall inside the target.  Gated on
+    # target size, because a gene panel is legitimately a sliver of any sample's
+    # callable bases.  Thresholds are uncalibrated.
+    kit: dict[str, float] = {}
+    if target_total and target_total >= cfg.kit_min_bp:
+        for label, c in cov_by_label.items():
+            total = total_bp(c.intervals)
+            if total > 0:
+                share = per_sample[label]["callable_bp"] / total
+                if share < cfg.kit_share_warn:
+                    kit[label] = share
+    if kit:
+        findings.append(
+            Finding(
+                code="TARGET_KIT_MISMATCH_SUSPECTED",
+                severity=Severity.WARN,
+                message=(
+                    f"only a small share of the callable bases of "
+                    f"{', '.join(f'{k} ({v:.0%})' for k, v in kit.items())} fall inside "
+                    f"the supplied target ({target_total:,} bp). That is what coverage "
+                    f"from a different kit, a whole-genome run or a different build "
+                    f"looks like. The build cannot be read from contig names, so this "
+                    f"is a plausibility check, not a test; its thresholds are "
+                    f"uncalibrated"
+                ),
+                evidence={
+                    "share_callable_in_target": kit,
+                    "threshold": cfg.kit_share_warn,
+                    "applies_when_target_bp_at_least": cfg.kit_min_bp,
+                    "calibrated": False,
+                },
+            )
+        )
+
+    by_region_block = None
+    if cfg.by_region:
+        by_region_block, region_findings, region_notes = _by_region_block(
+            target_bed, unit_rows, unit_reqs, cov_sets, contigs, exclude, cfg
+        )
+        findings += region_findings
+        notes += region_notes
+
     assessable = [u for u in unit_rows if u["gating_fraction"] is not None]
     by_rung: dict[str, int] = {}
     for u in unit_rows:
@@ -839,6 +1102,10 @@ def check_callability(
         "units": unit_rows,
         "analysis": analysis,
     }
+    if by_region_block is not None:
+        base_metrics["by_region"] = by_region_block
+    if exclusion_info is not None:
+        base_metrics["exclusion"] = exclusion_info
     if not assessable:
         return CheckResult(
             check=CHECK,

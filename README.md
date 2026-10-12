@@ -385,6 +385,81 @@ strictest assessable model, and the worst unit is named in the summary. The pool
 per-model numbers stay in `models`, because check 5 pools all affected samples
 across families. Per-unit detail is in `units`; the cohort roll-up is in `cohort`.
 
+### One gene, one exon: `--by-region`
+
+A single fraction averages a dead exon away: ten equal exons with one wholly
+uncovered is 90% callable, and "90% searched" is the wrong thing to say about that
+gene. Pass `--target` as a BED whose **column 4 names the regions** and add
+`--by-region`:
+
+    admissible callability --ped fam.ped --coverage KID=kid.quantized.bed.gz \
+        --target gene_exons.bed --by-region
+
+The JSON gains `metrics.by_region.units.<unit>` with one row per region (worst
+first) and one row per gene:
+
+| field | meaning |
+|---|---|
+| `fraction`, `callable_bp`, `bp` | share of the region callable in every sample the unit's strictest model needs |
+| `status` | `ok`, or `NOT_REPORTED` (below) |
+| `fully_uncallable` | the region has no callable base |
+| `uncallable_intervals` | the gaps, at most 10 listed (`n_uncallable_intervals` is the true count) |
+| `claim_rung`, `permitted_claim` | per region, from the same thresholds as the headline |
+| gene: `worst_region`, `worst_fraction`, `fraction`, `capped` | worst exon, and the bp-weighted share |
+
+A gene holding a region with **no callable base**, or one the coverage file does
+not report, cannot be rated above `SEARCHED_PARTLY` (`blind_region_cap`, configurable)
+however high its share, and its `permitted_claim` names the regions. The headline
+number and status are **not** changed by `--by-region`: they are about the whole
+target, and a whole-exome run would otherwise be capped by some blind exon
+somewhere. For a gene-level question read the gene row.
+
+Notes on the rows:
+
+- It is opt-in because kit BEDs often have column-4 names already; switching on their
+  presence would change what existing users get. Without `--by-region` the output has
+  no `by_region` key and every other number is unchanged.
+- A gene is the region name with a trailing marker removed once (`BRCA1_exon3`,
+  `BRCA1_3`, `BRCA1.3` give `BRCA1`). Change it with `--gene-regex`; a name it does
+  not match is its own gene. This is naming convention, not annotation: a name such
+  as `NM_000546.6_exon3` becomes the transcript, not the gene symbol.
+- Lines sharing a name are one region. Two *different* names that overlap stay two
+  regions. Unnamed lines become regions named by their coordinates.
+- Contig names in the output are normalised (`chr1` is shown as `1`).
+- Rows are capped at `max_region_rows` (5000 per unit), worst first, and the true
+  counts are reported, so a long list cannot be read as complete.
+- **NOT_REPORTED is not zero.** A contig the coverage file never mentions gives no
+  fraction and the claim `UNKNOWN`. Reporting it as zero would claim a measurement
+  nobody made; as covered, the opposite. Whole-target fractions still count it as not
+  searched, the safe direction. A callable-only BED that omits a contig cannot
+  distinguish "no callable bases" from "not reported", and is treated as the latter.
+
+### Excluding low-mappability regions: `--exclude-bed`
+
+    admissible callability ... --target kit.bed --exclude-bed low_mappability.bed
+
+Depth in repeats and low-mappability regions is unreliable (reads multi-map, so depth
+can be high where calls cannot be trusted). Intervals in the exclusion BED are taken
+out of every model's callable set and counted as **not searched**; the denominator
+stays the full target. The claim follows this stricter figure. Each model entry keeps
+the unfiltered figure as `without_exclusion`, and `metrics.exclusion` reports how much
+of the target the BED removes. `per_sample` fractions and `joint_callable_fraction`
+remain unfiltered. admissible ships no exclusion track: supply your own, on the same
+build as the target.
+
+### Is this the right target?
+
+Two plausibility warnings, neither of which changes the status:
+
+- `TARGET_CONTIG_NOT_IN_COVERAGE`: a coverage file never mentions a target contig.
+- `TARGET_KIT_MISMATCH_SUSPECTED`: for a target of at least `kit_min_bp` (5 Mb), less
+  than `kit_share_warn` (0.50) of a sample's callable bases fall inside it, which is
+  what coverage from another kit, a whole-genome run or another build looks like.
+  A gene panel is exempt, because it is legitimately a sliver of any sample's
+  callable bases. **Both numbers are uncalibrated defaults, not derived from a
+  benchmark.** The genome build cannot be read from contig names, so a build
+  mismatch is caught only when it shows up as this overlap.
+
 ### Real capture coverage
 
 Check 4's central claim — that the joint callable fraction is an intersection and

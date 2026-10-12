@@ -66,8 +66,23 @@ with a pedigree that has parents**, and drops a configuration field; read
   `--independent`.
 - **`--affected-only`** drops parents from the required sets (a proband without
   sequenced parents). De novo is then structurally undefined, not "missing coverage".
-- New library functions `intervals.subtract` and `intervals.read_named_bed`; nothing
-  uses them yet.
+- **`--by-region`** (opt-in): one row per named region of `--target`, worst region per
+  gene, a gene claim capped when a region has no callable base or is not reported
+  (`blind_region_cap`, default `SEARCHED_PARTLY`), and a `TARGET_REGIONS_NOT_SEARCHED`
+  finding. New `--gene-regex`. The headline and every existing number are unchanged;
+  without the flag there is no `by_region` key.
+- **`--exclude-bed`**: low-mappability or repeat intervals are counted as not searched;
+  the claim follows the filtered fraction and each model keeps `without_exclusion`.
+  `metrics.exclusion` reports its size. `EXCLUDE_BED_UNUSABLE` if it has no interval.
+- **NOT_REPORTED**: a target contig the coverage file never mentions is "not reported",
+  not "uncallable" - no fraction and claim `UNKNOWN` in region rows.
+- **Two new WARN findings that can appear on any run with a target**:
+  `TARGET_CONTIG_NOT_IN_COVERAGE` and `TARGET_KIT_MISMATCH_SUSPECTED` (the latter is
+  gated on a target of at least 5 Mb and uses an uncalibrated 0.50 share). Neither
+  changes the status.
+- New library: `intervals.subtract`, `intervals.read_named_bed`,
+  `intervals.IntervalIndex` (binary-search overlap and gaps, so one query per exon
+  does not cost a whole contig), and `BedFile.contigs_seen`.
 
 ### Known limitations
 
