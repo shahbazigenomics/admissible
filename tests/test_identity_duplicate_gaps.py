@@ -34,8 +34,8 @@ def _build_high_agreement_low_jaccard_vcf(tmp_path):
     """A is het at 100 sites; B is het at the first 20 of those (a subset)
     and hom-ref at the rest. Every shared site matches (agreement=1.0), the
     site sets only overlap 20/100 (jaccard=0.20), and non-ref counts differ
-    5x (100 vs 20) - the same shape as the real IPK-5/IPM-BJ case (agreement
-    1.000, jaccard 0.181, ~5.5x non-ref-count difference) that produced zero
+    5x (100 vs 20) - the shape a native VCF compared with an ANNOVAR AC/AN
+    reconstruction of the same sample produces, which yielded zero
     duplicate-related findings under the old AND-gate.
     """
     lines = [HEADER_TWO]
