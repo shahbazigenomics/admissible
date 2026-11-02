@@ -27,23 +27,23 @@ def write(tmp_path, name, text):
 def test_a_spreadsheet_in_words_is_read(tmp_path):
     p = write(tmp_path, "family.csv", (
         "Family,Sample ID,Father,Mother,Sex,Affected\n"
-        "IPC,IPC-1,,,Male,no\n"
-        "IPC,IPC-2,,,Female,No\n"
-        "IPC,IPC-3,IPC-1,IPC-2,M,YES\n"
-        "IPC,IPC-4,IPC-1,IPC-2,f,affected\n"
+        "FAM1,FAM1-1,,,Male,no\n"
+        "FAM1,FAM1-2,,,Female,No\n"
+        "FAM1,FAM1-3,FAM1-1,FAM1-2,M,YES\n"
+        "FAM1,FAM1-4,FAM1-1,FAM1-2,f,affected\n"
     ))
     ped = read_ped_table(p)
     assert ped.warnings == []
-    assert list(ped.individuals) == ["IPC-1", "IPC-2", "IPC-3", "IPC-4"]
-    assert ped.individuals["IPC-3"].sex is Sex.MALE
-    assert ped.individuals["IPC-4"].sex is Sex.FEMALE
-    assert ped.individuals["IPC-4"].affection is Affection.AFFECTED
-    assert ped.individuals["IPC-1"].affection is Affection.UNAFFECTED
-    assert ped.individuals["IPC-1"].family_id == "IPC"
+    assert list(ped.individuals) == ["FAM1-1", "FAM1-2", "FAM1-3", "FAM1-4"]
+    assert ped.individuals["FAM1-3"].sex is Sex.MALE
+    assert ped.individuals["FAM1-4"].sex is Sex.FEMALE
+    assert ped.individuals["FAM1-4"].affection is Affection.AFFECTED
+    assert ped.individuals["FAM1-1"].affection is Affection.UNAFFECTED
+    assert ped.individuals["FAM1-1"].family_id == "FAM1"
     # The relationships have to survive the translation, not just the fields.
-    assert ped.kinship("IPC-3", "IPC-1") == pytest.approx(0.25)
-    assert ped.kinship("IPC-3", "IPC-4") == pytest.approx(0.25)
-    assert ped.kinship("IPC-1", "IPC-2") == pytest.approx(0.0)
+    assert ped.kinship("FAM1-3", "FAM1-1") == pytest.approx(0.25)
+    assert ped.kinship("FAM1-3", "FAM1-4") == pytest.approx(0.25)
+    assert ped.kinship("FAM1-1", "FAM1-2") == pytest.approx(0.0)
 
 
 def test_other_column_spellings_and_tabs(tmp_path):

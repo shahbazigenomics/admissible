@@ -3,7 +3,14 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.1] — unreleased
+## [0.1.2] — 2026-11-02
+
+No change to what the tool computes. The 0.1.1 fixes below, published as a
+release for the first time, with real family and sample identifiers removed
+from the README, the project website and the tests (the PED example now uses
+`FAM1`), and the gene used as a CNV example removed from the README.
+
+## [0.1.1] — tagged 2026-10-07, not published as a release
 
 Fixes found after 0.1.0 by an AI adversarial review and by running the tool on a
 a real multi-family WES cohort. **Everyone installing from PyPI

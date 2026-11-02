@@ -31,14 +31,14 @@ NEXT STEPS: 1. resolve sample identity (blocking)
 
 ## Why this exists
 
-A candidate variant held up for a year turned out to be a false homozygous call
-supported by two reads. Chasing that led to a second discovery: two exomes filed
-under one family belonged to different people. Chasing *that* led to a third: the
-VCFs had been pre-filtered to coding-only and PASS-only before delivery, so only a
-fraction of the exome was ever searchable in the first place.
+Three failures recur in delivered exome data, and none of them is about
+pathogenicity. A candidate variant can rest on a homozygous call supported by two
+reads. Two exomes filed under one family can belong to different people. And the
+VCFs can arrive pre-filtered to coding-only and PASS-only, so only a fraction of
+the exome was ever searchable in the first place.
 
-None of the tools in that pipeline — a commercial interpretation platform, a
-standard annotator, a by-the-book GATK workflow — raised any of it. They all answer
+The usual tools — an interpretation platform, a standard annotator, a
+by-the-book GATK workflow — raise none of it. They all answer
 the same question: *is this variant pathogenic?* None of them answers the question
 that had to be answered first: *can I trust this data, and did I actually search
 enough?*
@@ -53,7 +53,7 @@ That gap is this tool.
 It never interprets a variant. It audits the evidence base that an interpretation
 would rest on, across five checks:
 
-| # | Check | Question | 0.1.1 |
+| # | Check | Question | 0.1.2 |
 |---|-------|----------|-------|
 | 1 | Identity | Is each sample who the pedigree says it is? | implemented |
 | 2 | Genotype | Which genotypes are not supported by their own evidence? | implemented |
@@ -190,10 +190,10 @@ values read in words; `--ped` takes it directly:
 
 ```csv
 Family,Sample ID,Father,Mother,Sex,Affected
-IPC,IPC-1,,,Male,no
-IPC,IPC-2,,,Female,no
-IPC,IPC-3,IPC-1,IPC-2,M,yes
-IPC,IPC-4,IPC-1,IPC-2,F,yes
+FAM1,FAM1-1,,,Male,no
+FAM1,FAM1-2,,,Female,no
+FAM1,FAM1-3,FAM1-1,FAM1-2,M,yes
+FAM1,FAM1-4,FAM1-1,FAM1-2,F,yes
 ```
 
 `sample`/`id`/`individual`, `father`/`pat`/`dad`, `mother`/`mat`/`mum`,
@@ -369,9 +369,8 @@ Callability here is depth-based, which makes it blind to structural variation. A
 heterozygous deletion leaves depth comfortably above any sensible floor, so the
 region reads as callable; the surviving allele is then called homozygous with a
 genuinely clean allele balance, so check 2 does not flag it either. Both checks
-pass and the genotype is still wrong. Where a CNV is a plausible mechanism —
-`IL10RA`/`IL10RB` in early-onset IBD, for one — a read-depth or split-read CNV
-caller answers a question this tool does not ask.
+pass and the genotype is still wrong. Where a CNV is a plausible mechanism for
+the phenotype, a read-depth or split-read CNV caller answers a question this tool does not ask.
 
 The target BED is also taken on trust. Supply the wrong capture kit and every
 fraction in check 4 is wrong; only a gross mismatch trips `NOT_INTERVAL_RESTRICTED`.

@@ -370,12 +370,12 @@ def test_snpeff_ann_supplies_the_gene(tmp_path):
         '##INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: '
         "'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID'\">\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
-        "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense_variant|MODERATE|IL10RA|ENSG9"
+        "chr1\t100\t.\tA\tG\t50\tPASS\tANN=G|missense_variant|MODERATE|GENE1|ENSG9"
         "\tGT\t0/1\n"
     )
     scan = scan_vcf(p, SiteIndex())
     assert scan.header.csq_gene == ("ANN", 3)      # Gene_Name
-    assert list(scan.site_gene.values()) == ["IL10RA"]
+    assert list(scan.site_gene.values()) == ["GENE1"]
 
 
 def test_a_de_novo_count_carries_its_error_caveat(joint):
