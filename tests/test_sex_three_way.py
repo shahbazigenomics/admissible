@@ -68,7 +68,7 @@ def test_clear_calls_give_no_sex_finding(tmp_path):
 
 
 def test_ceiling_is_configurable(tmp_path):
-    res = _build(tmp_path)  # default 0.25
+    res = _build(tmp_path)  # default 0.30
     assert _by_code(res, "SEX_UNCERTAIN")
     # a ceiling above the boundary reduces to the old two-way rule
     cfg = IdentityConfig(male_het_ceiling=1.0)

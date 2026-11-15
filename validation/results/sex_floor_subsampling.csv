@@ -1,33 +1,33 @@
 build,sites_per_sample,floor,calls,correct,wrong,undetermined,wrong_pct,undetermined_pct
 build undeclared (as in the paper),10,floor 50 (default),3400,0,0,3400,0.0,100.0
-build undeclared (as in the paper),10,no floor,3400,1195,10,2195,0.29,64.56
+build undeclared (as in the paper),10,no floor,3400,663,0,2737,0.0,80.5
 build undeclared (as in the paper),20,floor 50 (default),3400,0,0,3400,0.0,100.0
-build undeclared (as in the paper),20,no floor,3400,1899,19,1482,0.56,43.59
+build undeclared (as in the paper),20,no floor,3400,801,0,2599,0.0,76.44
 build undeclared (as in the paper),30,floor 50 (default),3400,0,0,3400,0.0,100.0
-build undeclared (as in the paper),30,no floor,3400,2198,19,1183,0.56,34.79
-build undeclared (as in the paper),50,floor 50 (default),3400,2544,9,847,0.26,24.91
-build undeclared (as in the paper),50,no floor,3400,2579,9,812,0.26,23.88
-build undeclared (as in the paper),100,floor 50 (default),3400,2996,4,400,0.12,11.76
-build undeclared (as in the paper),100,no floor,3400,2934,11,455,0.32,13.38
-build undeclared (as in the paper),200,floor 50 (default),3400,3206,2,192,0.06,5.65
-build undeclared (as in the paper),200,no floor,3400,3218,1,181,0.03,5.32
-build undeclared (as in the paper),400,floor 50 (default),3400,3262,5,133,0.15,3.91
-build undeclared (as in the paper),400,no floor,3400,3277,4,119,0.12,3.5
+build undeclared (as in the paper),30,no floor,3400,1707,0,1693,0.0,49.79
+build undeclared (as in the paper),50,floor 50 (default),3400,2240,0,1160,0.0,34.12
+build undeclared (as in the paper),50,no floor,3400,2267,0,1133,0.0,33.32
+build undeclared (as in the paper),100,floor 50 (default),3400,2903,0,497,0.0,14.62
+build undeclared (as in the paper),100,no floor,3400,2840,0,560,0.0,16.47
+build undeclared (as in the paper),200,floor 50 (default),3400,3187,0,213,0.0,6.26
+build undeclared (as in the paper),200,no floor,3400,3201,0,199,0.0,5.85
+build undeclared (as in the paper),400,floor 50 (default),3400,3262,0,138,0.0,4.06
+build undeclared (as in the paper),400,no floor,3400,3277,0,123,0.0,3.62
 build undeclared (as in the paper),all,floor 50 (default),17,16,0,1,0.0,5.88
 build undeclared (as in the paper),all,no floor,17,16,0,1,0.0,5.88
 "GRCh37, PAR and XTR excluded",10,floor 50 (default),3400,0,0,3400,0.0,100.0
-"GRCh37, PAR and XTR excluded",10,no floor,3400,1175,4,2221,0.12,65.32
+"GRCh37, PAR and XTR excluded",10,no floor,3400,668,1,2731,0.03,80.32
 "GRCh37, PAR and XTR excluded",20,floor 50 (default),3400,0,0,3400,0.0,100.0
-"GRCh37, PAR and XTR excluded",20,no floor,3400,1881,13,1506,0.38,44.29
+"GRCh37, PAR and XTR excluded",20,no floor,3400,767,0,2633,0.0,77.44
 "GRCh37, PAR and XTR excluded",30,floor 50 (default),3400,0,0,3400,0.0,100.0
-"GRCh37, PAR and XTR excluded",30,no floor,3400,2225,13,1162,0.38,34.18
-"GRCh37, PAR and XTR excluded",50,floor 50 (default),3400,2519,12,869,0.35,25.56
-"GRCh37, PAR and XTR excluded",50,no floor,3400,2538,3,859,0.09,25.26
-"GRCh37, PAR and XTR excluded",100,floor 50 (default),3400,2993,4,403,0.12,11.85
-"GRCh37, PAR and XTR excluded",100,no floor,3400,2922,3,475,0.09,13.97
-"GRCh37, PAR and XTR excluded",200,floor 50 (default),3400,3174,9,217,0.26,6.38
-"GRCh37, PAR and XTR excluded",200,no floor,3400,3175,8,217,0.24,6.38
-"GRCh37, PAR and XTR excluded",400,floor 50 (default),3400,3288,7,105,0.21,3.09
-"GRCh37, PAR and XTR excluded",400,no floor,3400,3279,8,113,0.24,3.32
+"GRCh37, PAR and XTR excluded",30,no floor,3400,1736,0,1664,0.0,48.94
+"GRCh37, PAR and XTR excluded",50,floor 50 (default),3400,2208,0,1192,0.0,35.06
+"GRCh37, PAR and XTR excluded",50,no floor,3400,2228,0,1172,0.0,34.47
+"GRCh37, PAR and XTR excluded",100,floor 50 (default),3400,2898,0,502,0.0,14.76
+"GRCh37, PAR and XTR excluded",100,no floor,3400,2834,0,566,0.0,16.65
+"GRCh37, PAR and XTR excluded",200,floor 50 (default),3400,3155,0,245,0.0,7.21
+"GRCh37, PAR and XTR excluded",200,no floor,3400,3153,0,247,0.0,7.26
+"GRCh37, PAR and XTR excluded",400,floor 50 (default),3400,3288,0,112,0.0,3.29
+"GRCh37, PAR and XTR excluded",400,no floor,3400,3279,0,121,0.0,3.56
 "GRCh37, PAR and XTR excluded",all,floor 50 (default),17,16,0,1,0.0,5.88
 "GRCh37, PAR and XTR excluded",all,no floor,17,16,0,1,0.0,5.88

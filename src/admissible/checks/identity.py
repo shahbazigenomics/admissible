@@ -90,14 +90,16 @@ class IdentityConfig:
     default_sex_boundary: float = 0.45
     # A sample is called male only if the upper end of its chrX het interval is
     # below BOTH the cohort boundary and this ceiling. Between the ceiling and the
-    # boundary the sex is left undetermined (reported, not blocking). Measured on
-    # the 1000 Genomes high-coverage cohort (1,603 females, 1,599 males, about
-    # 3,000 non-ref chrX sites per sample, 14 windows spread over chrX): about 6%
-    # of females have chrX heterozygosity below 0.45, while no more than 0.3% fall
-    # below 0.25 with a male call. A ceiling of 0.25 left 0.3% of females wrongly
-    # called male and about 10% undetermined. Calibrated on one cohort of
-    # lymphoblastoid cell lines; see validation/calibrate_identity.py.
-    male_het_ceiling: float = 0.25
+    # boundary the sex is left undetermined (reported, not blocking). Two public
+    # cohorts bound the choice. 1000 Genomes high-coverage (1,603 females, 1,599
+    # males, about 3,000 non-ref chrX sites per sample over 14 windows spread across
+    # chrX): the two-way rule called 91 females (5.7%) male; a ceiling of 0.30 leaves
+    # 7 wrong (0.4%) and 158 undetermined (10%). CEPH 1463 (called by freebayes, which
+    # leaves chrX heterozygosity of 0.10-0.21 in males): a ceiling below 0.26 pushes
+    # the male with 0.21 (409 sites, upper bound 0.252) into undetermined, so 0.25
+    # was too tight; 0.30 keeps 16 of 17 called and none wrong. Calibrated on these
+    # two cohorts only; see validation/calibrate_identity.py.
+    male_het_ceiling: float = 0.30
     exclude_par: bool = True
     exclude_xtr: bool = True
     # Cohort-wide duplicate/relatedness detection is O(n^2) in sample count,
