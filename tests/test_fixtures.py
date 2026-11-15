@@ -35,8 +35,8 @@ def test_relatedness_bands_are_narrowly_separated(cohort):
 
 
 def test_planted_sex_profiles(cohort):
-    assert cohort["metrics"]["chrX_het_FAMB_04"] == 0.297
-    assert cohort["metrics"]["chrX_het_FAMB_05"] == 0.376
+    assert cohort["metrics"]["chrX_het_FAMB_04"] == 0.0713
+    assert cohort["metrics"]["chrX_het_FAMB_05"] == 0.0771
 
 
 def test_all_files_in_wes_size_range(cohort):

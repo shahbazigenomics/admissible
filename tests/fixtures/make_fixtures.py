@@ -13,7 +13,7 @@ errors this tool exists to find:
   * ``FAMB_05`` is declared a daughter in family B.  It is the same individual
     as ``FAMC_03``, sequenced to a lower depth: Jaccard 0.7508, agreement
     0.9726, and a visibly smaller file.
-  * Both of those samples are male by chrX heterozygosity (29.7% and 37.6%)
+  * Both of those samples are male by chrX heterozygosity (about 7%)
     while their pedigree slots declare them female.
   * Declared-unrelated pairs sit at Jaccard 0.34-0.39; true first-degree pairs
     at 0.48-0.53, which is a narrow separation on purpose - that thin margin
@@ -94,11 +94,11 @@ PRIMARY = [s for s in TRUE_SEX if s not in ("FAMB_04", "FAMB_05")]
 # chrX: (n_sites, n_het).  FAMC_03 and FAMC_04 carry the two profiles that end
 # up, via the two swaps, in female-declared slots.
 X_PROFILE = {
-    "FAMC_03": (500, 188),   # 37.6%
-    "FAMC_04": (505, 150),   # 29.7%
+    "FAMC_03": (500, 38),    # 7.6%
+    "FAMC_04": (505, 36),    # 7.1%
 }
 X_FEMALE = (500, 310)        # 62.0%
-X_MALE = (500, 175)          # 35.0%
+X_MALE = (500, 40)           # 8.0%, as in real male calls (CEPH 1463 about 7%)
 Y_COUNT = {"M": 6, "F": 2}
 Y_OVERRIDE = {"FAMC_03": 5, "FAMC_04": 7}
 

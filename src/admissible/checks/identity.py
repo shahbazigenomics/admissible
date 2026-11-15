@@ -88,6 +88,16 @@ class IdentityConfig:
     unrelated_max: float = 0.0442
     # Fallback sex boundary if the cohort gives no clean gap to calibrate on.
     default_sex_boundary: float = 0.45
+    # A sample is called male only if the upper end of its chrX het interval is
+    # below BOTH the cohort boundary and this ceiling. Between the ceiling and the
+    # boundary the sex is left undetermined (reported, not blocking). Measured on
+    # the 1000 Genomes high-coverage cohort (1,603 females, 1,599 males, about
+    # 3,000 non-ref chrX sites per sample, 14 windows spread over chrX): about 6%
+    # of females have chrX heterozygosity below 0.45, while no more than 0.3% fall
+    # below 0.25 with a male call. A ceiling of 0.25 left 0.3% of females wrongly
+    # called male and about 10% undetermined. Calibrated on one cohort of
+    # lymphoblastoid cell lines; see validation/calibrate_identity.py.
+    male_het_ceiling: float = 0.25
     exclude_par: bool = True
     exclude_xtr: bool = True
     # Cohort-wide duplicate/relatedness detection is O(n^2) in sample count,
@@ -283,8 +293,15 @@ def sex_evidence(
         lo, hi = wilson_interval(n_het, n_x)
         if lo > boundary:
             inferred, why = Sex.FEMALE, "chrX heterozygosity above the cohort boundary"
+        elif hi < min(boundary, cfg.male_het_ceiling):
+            inferred, why = Sex.MALE, "chrX heterozygosity clearly male-like"
         elif hi < boundary:
-            inferred, why = Sex.MALE, "chrX heterozygosity below the cohort boundary"
+            inferred, why = (
+                Sex.UNKNOWN,
+                f"chrX heterozygosity is below the cohort boundary but not clearly "
+                f"male-like (upper bound {hi:.1%}, male ceiling {cfg.male_het_ceiling:.0%}); "
+                f"a female with a largely homozygous X cannot be excluded",
+            )
         else:
             inferred, why = (
                 Sex.UNKNOWN,
@@ -783,6 +800,29 @@ def check_identity(
                         message=f"{sample}: {ev.reason}",
                         subjects=[sample],
                         evidence=ev.to_dict(),
+                    )
+                )
+            elif ev.inferred is Sex.UNKNOWN and declared is not Sex.UNKNOWN:
+                findings.append(
+                    Finding(
+                        code="SEX_UNCERTAIN",
+                        severity=Severity.WARN,
+                        message=(
+                            f"{sample}: declared {declared.value}, but chrX het "
+                            f"{ev.x_het_frac:.1%} over {ev.n_x_sites} sites (95% CI "
+                            f"{ev.ci_low:.1%}-{ev.ci_high:.1%}) is neither clearly female "
+                            f"nor clearly male, so the declared sex is not confirmed. "
+                            f"Real females fall here (a largely homozygous X, as in "
+                            f"consanguinity, is one cause among several); a sample swap "
+                            f"cannot be excluded"
+                        ),
+                        subjects=[sample],
+                        evidence=ev.to_dict()
+                        | {
+                            "declared_sex": declared.value,
+                            "boundary": sex_boundary,
+                            "male_het_ceiling": cfg.male_het_ceiling,
+                        },
                     )
                 )
             continue

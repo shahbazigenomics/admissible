@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — unreleased
+
+### Changed
+
+- **The sex check no longer calls a sample male on chrX heterozygosity alone below the
+  cohort boundary.** A sample is called male only if the upper end of its chrX
+  heterozygosity interval is below both the cohort boundary and a new
+  `male_het_ceiling` (default 0.25). Between the ceiling and the boundary the sex is
+  undetermined and the report gives a non-blocking `SEX_UNCERTAIN` warning. On the
+  1000 Genomes high-coverage cohort (1,603 females, 1,599 males, about 3,000 non-ref
+  chrX sites per sample over 14 windows spread across chrX), the old rule called
+  91 females (5.7%) male, which blocked the run; the new rule leaves 5 wrong (0.3%)
+  and 160 undetermined (10%). These females were not inbred (F about 0), so
+  consanguinity is one cause among several. Calibrated on one cohort of
+  lymphoblastoid cell lines; the 0.25 ceiling is not universal. Issue #5.
+- The synthetic test cohort models male chrX heterozygosity at 8% instead of 35%, in line
+  with real male calls (CEPH 1463 about 7%).
+
 ## [0.2.0] — unreleased
 
 Check 4 (callability) only. Identity, provenance, genotype and models behave as in
