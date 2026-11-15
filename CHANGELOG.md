@@ -3,9 +3,15 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3] — unreleased
+## [0.2.0] — unreleased
 
-### Changed
+Check 4 (callability) and two rules of check 1 (identity: sex, parent-offspring).
+Provenance, genotype and models behave as in 0.1.2. **This changes check 4's numbers,
+status and `models` output for any run with a pedigree that has parents**, drops a
+configuration field, and removes the blocking `PARENT_OFFSPRING_NOT_SUPPORTED` finding
+and `parent_ibs0_max`; read "Changed" before upgrading a consumer.
+
+### Identity (check 1)
 
 - **The sex check no longer calls a sample male on chrX heterozygosity alone below the
   cohort boundary.** A sample is called male only if the upper end of its chrX
@@ -35,12 +41,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The synthetic test cohort models male chrX heterozygosity at 8% instead of 35%, in line
   with real male calls (CEPH 1463 about 7%).
 
-## [0.2.0] — unreleased
-
-Check 4 (callability) only. Identity, provenance, genotype and models behave as in
-0.1.1. **This changes check 4's numbers, status and `models` output for any run
-with a pedigree that has parents**, and drops a configuration field; read
-"Changed" before upgrading a consumer.
 
 ### Fixed
 
