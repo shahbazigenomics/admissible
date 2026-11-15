@@ -19,6 +19,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   ceiling of 0.25 would have lost one male, whose chrX het is 0.21). These females were not inbred (F about 0), so
   consanguinity is one cause among several. Calibrated on 1000 Genomes
   (lymphoblastoid cell lines) and CEPH 1463 only; the 0.30 ceiling is not universal. Issue #5.
+- **The parent-offspring IBS0 rule now warns and counts biallelic SNVs only.**
+  `PARENT_OFFSPRING_NOT_SUPPORTED` (BLOCKING, IBS0 per het call above 0.005) is replaced
+  by `PARENT_OFFSPRING_IBS0_HIGH` (WARN, above `parent_ibs0_warn` = 0.015, biallelic
+  autosomal SNVs only). `parent_ibs0_max` is removed. On the 1000 Genomes high-coverage
+  cohort (1,206 true parent-child pairs, 9.8 Mb of chr22, PASS SNVs) the old limit
+  called 19% of true parents sibling-like (98% when indels and multiallelic sites were
+  included); 5.5% exceed 0.015. The one clear full-sibling pair sat at 0.0148, inside
+  that noise, so IBS0 cannot separate a parent from a sibling reliably; a parent-sibling
+  swap is now a warning, not a block. Unrelated pairs start near 0.037 and are caught by
+  kinship. Tried and rejected: using the child's other parent as a noise control (8-10%
+  of true trios flagged) and GQ >= 30 filtering (improves true parents but the sibling
+  pair falls with them). A windowed IBS0 test, which would separate IBD0 segments, needs
+  genome-wide data and more sibling pairs. Issue #6.
 - The synthetic test cohort models male chrX heterozygosity at 8% instead of 35%, in line
   with real male calls (CEPH 1463 about 7%).
 

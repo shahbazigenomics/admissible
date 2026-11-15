@@ -1,7 +1,7 @@
 """0.1.1: pairwise kinship and IBS0 use autosomes only.
 
 Found by Ali's validation, then confirmed on CEPH 1463: father-son pairs were
-reported as "sibling-like" (PARENT_OFFSPRING_NOT_SUPPORTED, BLOCKING) because
+reported as "sibling-like" (PARENT_OFFSPRING_IBS0_HIGH, BLOCKING) because
 a son's X comes from his mother, so a father and his son share no X. Written as
 hom-ref / hom-alt (hemizygous), they disagree at roughly a third of their X sites
 and every disagreement of that kind is an IBS0 site.
@@ -78,7 +78,7 @@ def _run(tmp_path):
 
 def test_father_and_son_are_not_flagged_for_not_sharing_an_x(tmp_path):
     res = _run(tmp_path)
-    assert not [f for f in res.findings if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"]
+    assert not [f for f in res.findings if f.code == "PARENT_OFFSPRING_IBS0_HIGH"]
     assert not [f for f in res.findings if f.severity is Severity.BLOCKING]
 
 

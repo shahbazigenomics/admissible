@@ -55,13 +55,21 @@ class IdentityConfig:
     min_x_sites: int = 50
     min_shared_sites: int = 500
     min_informative_sites: int = 2000
-    # A declared parent-offspring pair must have essentially no IBS0 sites, so
-    # kinship alone (0.25 for parent-offspring AND for full sibs) cannot tell a
-    # parent from a sibling. On CEPH 1463 (about 20k sites per pair) true
-    # parent-offspring pairs reached at most 0.0008 IBS0 per het call and
-    # full sibs were at least 0.0145. 0.005 sits between them; the count floor
-    # stops a handful of genotyping errors from tripping it.
-    parent_ibs0_max: float = 0.005
+    # A declared parent-offspring pair should have few IBS0 sites, but how few
+    # depends on genotype noise, and kinship alone (0.25 for parent-offspring AND
+    # for full sibs) cannot tell a parent from a sibling. Measured on biallelic
+    # autosomal SNVs of the 1000 Genomes high-coverage cohort (1,206 true
+    # parent-child pairs, PASS calls, 9.8 Mb of chr22, about 18,700 het calls per
+    # pair): the IBS0 rate per het call has median 0.0021 and 95th percentile
+    # 0.0164, so a limit of 0.005 would have called 19% of true parents sibling-
+    # like. The one clear full-sibling pair sat at 0.0148, inside that noise, so
+    # IBS0 cannot separate a parent from a sibling reliably and is reported as a
+    # warning, never as a block. 0.015 is the sibling-like edge: about 5% of true
+    # parents exceed it. On CEPH 1463 (about 20k sites per pair) true parents
+    # reached at most 0.0008 and full sibs were at least 0.0145. Unrelated pairs
+    # start near 0.037 and are caught by kinship, not by this rule. Indels and
+    # multiallelic sites roughly double the noise, so only biallelic SNVs count.
+    parent_ibs0_warn: float = 0.015
     parent_ibs0_min_count: int = 20
     # A pair is a duplicate candidate at or above both of these.  Agreement is
     # the discriminating term: no true relative reaches ~0.95 concordance at
@@ -167,6 +175,9 @@ class PairEvidence:
     ibs0_rate: float | None = None
     n_ibs0: int | None = None
     n_het_total: int | None = None
+    # Biallelic autosomal SNVs only: the basis of the parent-offspring IBS0 rule.
+    n_ibs0_snv: int | None = None
+    n_het_snv: int | None = None
     n_nonref_a: int = 0
     n_nonref_b: int = 0
 
@@ -182,6 +193,13 @@ class PairEvidence:
         if self.n_ibs0 is None or not self.n_het_total:
             return None
         return self.n_ibs0 / self.n_het_total
+
+    @property
+    def ibs0_per_het_snv(self) -> float | None:
+        """IBS0 per heterozygous call over biallelic autosomal SNVs only."""
+        if self.n_ibs0_snv is None or not self.n_het_snv:
+            return None
+        return self.n_ibs0_snv / self.n_het_snv
 
     @property
     def king_band(self) -> str | None:
@@ -212,6 +230,9 @@ class PairEvidence:
                 "ibs0_rate": self.ibs0_rate,
                 "n_ibs0": self.n_ibs0,
                 "ibs0_per_het": self.ibs0_per_het,
+                "n_ibs0_snv": self.n_ibs0_snv,
+                "n_het_snv": self.n_het_snv,
+                "ibs0_per_het_snv": self.ibs0_per_het_snv,
             }
         return d
 
@@ -443,6 +464,15 @@ def autosomal_site_ids(matrix: GenotypeMatrix) -> set[int]:
     return out
 
 
+def snv_site_ids(matrix: GenotypeMatrix) -> set[int]:
+    """Site ids of biallelic single-nucleotide variants (ref and alt one base each)."""
+    return {
+        i
+        for i, key in enumerate(matrix.index.keys)
+        if len(key[2]) == 1 and len(key[3]) == 1 and key[3] not in ("*", ".")
+    }
+
+
 def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[PairEvidence]:
     out: list[PairEvidence] = []
     names = matrix.samples
@@ -454,6 +484,16 @@ def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[P
             het=sets[n].het & auto,
             homalt=sets[n].homalt & auto,
             homref=sets[n].homref & auto,
+        )
+        for n in names
+    }
+    snv = auto & snv_site_ids(matrix)
+    snv_sets = {
+        n: SampleSets(
+            assessed=auto_sets[n].assessed & snv,
+            het=auto_sets[n].het & snv,
+            homalt=auto_sets[n].homalt & snv,
+            homref=auto_sets[n].homref & snv,
         )
         for n in names
     }
@@ -489,6 +529,9 @@ def pair_evidence(matrix: GenotypeMatrix, sets: dict[str, SampleSets]) -> list[P
                 ev.ibs0_rate = (n_ibs0 / ev.n_informative) if ev.n_informative else None
                 ev.n_ibs0 = n_ibs0
                 ev.n_het_total = denom
+                va, vb = snv_sets[a], snv_sets[b]
+                ev.n_het_snv = len(va.het & vb.assessed) + len(vb.het & va.assessed)
+                ev.n_ibs0_snv = len(va.homalt & vb.homref) + len(vb.homalt & va.homref)
             out.append(ev)
     return out
 
@@ -1040,27 +1083,26 @@ def check_identity(
             if declared is Relationship.PARENT_OFFSPRING and not (
                 close_but_looks_distant or distant_but_looks_close
             ):
-                per_het = ev.ibs0_per_het
+                per_het = ev.ibs0_per_het_snv
                 if (
                     per_het is not None
-                    and ev.n_ibs0 is not None
-                    and ev.n_ibs0 >= cfg.parent_ibs0_min_count
-                    and per_het > cfg.parent_ibs0_max
+                    and ev.n_ibs0_snv is not None
+                    and ev.n_ibs0_snv >= cfg.parent_ibs0_min_count
+                    and per_het > cfg.parent_ibs0_warn
                 ):
-                    n_ped_mismatch += 1
                     findings.append(
                         Finding(
-                            code="PARENT_OFFSPRING_NOT_SUPPORTED",
-                            severity=Severity.BLOCKING,
+                            code="PARENT_OFFSPRING_IBS0_HIGH",
+                            severity=Severity.WARN,
                             message=(
-                                f"{ev.a}/{ev.b}: the pedigree declares parent and child, "
-                                f"but the genotypes do not support it. Kinship "
-                                f"(phi={observed:.4f}) is first-degree-sized, yet they "
-                                f"have {ev.n_ibs0} IBS0 sites ({per_het:.4f} per het "
-                                f"call; a true parent and child have almost none, above "
-                                f"{cfg.parent_ibs0_max} is sibling- or "
-                                f"second-degree-like). Check whether one of them is a "
-                                f"sibling, or a more distant relative, of the other"
+                                f"{ev.a}/{ev.b}: the pedigree declares parent and child. "
+                                f"Kinship (phi={observed:.4f}) is first-degree-sized, but "
+                                f"{ev.n_ibs0_snv} IBS0 SNV sites ({per_het:.4f} per het "
+                                f"call) is above {cfg.parent_ibs0_warn}, the sibling-like "
+                                f"edge. About 5% of true parent-child pairs in a public "
+                                f"cohort exceed it through genotype noise, so this does "
+                                f"not show a sibling or a more distant relative; it is "
+                                f"worth checking the parent-child link"
                             ),
                             subjects=[ev.a, ev.b],
                             evidence=ev.to_dict()
@@ -1068,13 +1110,10 @@ def check_identity(
                                 "declared_relationship": declared.value,
                                 "expected_kinship": expected,
                                 "observed_kinship": observed,
-                                "ibs0_per_het_max": cfg.parent_ibs0_max,
-                                "do_not_conclude": (
-                                    "any segregation result computed on this pedigree"
-                                ),
+                                "ibs0_per_het_warn": cfg.parent_ibs0_warn,
                                 "next_steps": [
-                                    "re-check the parent-child links for this pair "
-                                    "against the sample sheet (blocking)"
+                                    "re-check the parent-child link for this pair "
+                                    "against the sample sheet"
                                 ],
                             },
                         )

@@ -58,13 +58,13 @@ def test_the_correct_pedigree_has_no_kinship_or_sex_false_positives(result):
 def test_the_full_published_pedigree_is_accepted_with_no_finding(result):
     """The published pedigree and this extract agree, so nothing is flagged.
 
-    Until 0.1.1 this test pinned 7 PARENT_OFFSPRING_NOT_SUPPORTED findings and the
+    Until 0.1.1 this test pinned 7 PARENT_OFFSPRING_IBS0_HIGH findings and the
     docstring said the cause was unknown. It was ours: pairwise IBS0 and kinship
     included non-PAR chrX, and a father and his son share no X. Ali's validation
     suspected chrX; removing it took those 7 pairs from 352-501 IBS0 sites to at
     most 5. See ``test_father_son_pairs_look_like_parent_and_child``.
     """
-    assert not [f for f in result.findings if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"]
+    assert not [f for f in result.findings if f.code == "PARENT_OFFSPRING_IBS0_HIGH"]
     assert not [f for f in result.findings if f.severity is Severity.BLOCKING]
 
 

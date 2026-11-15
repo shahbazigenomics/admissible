@@ -58,7 +58,7 @@ def _audit(tmp_path, ped):
 
 def test_correct_pedigree_has_no_parent_offspring_finding(tmp_path):
     res = _audit(tmp_path, _ped(tmp_path, "ok.ped", "F"))
-    assert not [f for f in res.findings if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"]
+    assert not [f for f in res.findings if f.code == "PARENT_OFFSPRING_IBS0_HIGH"]
     assert not [f for f in res.findings if f.severity is Severity.BLOCKING]
 
 
@@ -66,11 +66,11 @@ def test_a_sibling_declared_as_a_parent_is_caught(tmp_path):
     ped = _ped(tmp_path, "swap.ped", "C1")  # C2's "father" is really C2's brother
     assert ped.relationship("C1", "C2") is Relationship.PARENT_OFFSPRING
     res = _audit(tmp_path, ped)
-    hits = [f for f in res.findings if f.code == "PARENT_OFFSPRING_NOT_SUPPORTED"]
+    hits = [f for f in res.findings if f.code == "PARENT_OFFSPRING_IBS0_HIGH"]
     assert [set(f.subjects) for f in hits] == [{"C1", "C2"}]
     f = hits[0]
-    assert f.severity is Severity.BLOCKING
-    assert f.evidence["ibs0_per_het"] > IdentityConfig().parent_ibs0_max
-    assert f.evidence["n_ibs0"] >= IdentityConfig().parent_ibs0_min_count
+    assert f.severity is Severity.WARN  # IBS0 cannot separate a parent from a sibling reliably
+    assert f.evidence["ibs0_per_het_snv"] > IdentityConfig().parent_ibs0_warn
+    assert f.evidence["n_ibs0_snv"] >= IdentityConfig().parent_ibs0_min_count
     # the true parent of C2 (M) is not accused
     assert all(set(x.subjects) != {"M", "C2"} for x in hits)
