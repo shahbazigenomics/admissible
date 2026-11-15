@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-11-15
 
 Check 4 (callability) and two rules of check 1 (identity: sex, parent-offspring).
 Provenance, genotype and models behave as in 0.1.2. **This changes check 4's numbers,
